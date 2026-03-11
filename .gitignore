@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Fuzzing outputs
+results/
+outputs/
+evaluation/
+*.log
+experiments/
+# generated state directories inside presets
+preset/*/gen*
+preset/*/stamps
+
+# globally ignore any directories named "gen*", "initial" or "stamps" with
+# all their contents. this covers cases outside the preset tree as requested by
+# the user.
+**/gen*/
+**/initial/
+**/stamps/
+
+# ignore fuzzbench artifacts
+fuzzbench/
+
+# OS
+.DS_Store
+Thumbs.db
+benchmark/
