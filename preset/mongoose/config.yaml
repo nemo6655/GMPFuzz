@@ -1,0 +1,54 @@
+# GMPFuzz configuration for MQTT protocol fuzzing (Mongoose)
+# Mongoose is a single-file embedded web/MQTT server library by Cesanta
+
+type: profuzzbench
+project_name: mongoose
+fuzzbench_project: mongoose
+protocol_type: mqtt
+
+target:
+  options: "-P MQTT -D 10000 -q 3 -s 3 -E -K -R"
+
+model:
+  names:
+    - codellama
+  endpoints:
+    - codellama/CodeLlama-13b-hf:http://192.168.31.53:8192
+
+run:
+  seeds: preset/mongoose/init_seeds
+  max_generations: 20
+  selection_strategy: lattice
+  num_selected: 100
+  genvariant_dir: "{ELMFUZZ_RUNDIR}/{GEN}/variants/"
+  genoutput_dir: "{ELMFUZZ_RUNDIR}/{GEN}/seeds/"
+  logdir: "{ELMFUZZ_RUNDIR}/{GEN}/logs"
+  clean: true
+  state_pools:
+    - "0000"
+    - "0001"
+    - "0002"
+    - "0003"
+  rescue: true
+
+# ASE (Adaptive Synchronization Epoch) configuration
+ase:
+  enabled: true
+  T_min: 1800
+  T_max: 7200
+  T_default: 3600
+  T_budget: 86400
+  tau_stall: 300
+  delta: 30
+  alpha: 0.2
+  beta: 0.02
+  gamma: 0.15
+  T_llm_estimate: 2400
+
+cli:
+  genvariants_parallel:
+    num_variants: 10
+  getcov_fuzzbench:
+    timeout: 60
+    jobs: 4
+    skip: 5

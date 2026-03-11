@@ -1,0 +1,96 @@
+{
+  "config": {
+    "T_min": 1800,
+    "T_max": 7200,
+    "T_default": 3600,
+    "T_budget": 86400,
+    "tau_stall": 300,
+    "delta": 30,
+    "alpha": 0.2,
+    "beta": 0.02,
+    "gamma": 0.15,
+    "T_llm_estimate": 2400,
+    "min_fuzzing_ratio": 0.5
+  },
+  "history": [
+    {
+      "gen": 0,
+      "delta_cov": 97.0,
+      "actual_time": 843.595700263977,
+      "start_cov": 326.0,
+      "end_cov": 423.0,
+      "was_early_stopped": true,
+      "was_extended": false,
+      "extend_count": 0,
+      "wall_clock_total": 1427.9830617904663
+    },
+    {
+      "gen": 0,
+      "delta_cov": 184.0,
+      "actual_time": 1867.4492447376251,
+      "start_cov": 327.0,
+      "end_cov": 511.0,
+      "was_early_stopped": true,
+      "was_extended": true,
+      "extend_count": 1,
+      "wall_clock_total": 2435.537410736084
+    },
+    {
+      "gen": 1,
+      "delta_cov": 2316.0,
+      "actual_time": 1973.7531201839447,
+      "start_cov": 331.0,
+      "end_cov": 2647.0,
+      "was_early_stopped": true,
+      "was_extended": true,
+      "extend_count": 2,
+      "wall_clock_total": 6933.09601020813
+    },
+    {
+      "gen": 2,
+      "delta_cov": 3454.0,
+      "actual_time": 2126.4559264183044,
+      "start_cov": 452.0,
+      "end_cov": 3906.0,
+      "was_early_stopped": true,
+      "was_extended": true,
+      "extend_count": 2,
+      "wall_clock_total": 10307.460678100586
+    },
+    {
+      "gen": 3,
+      "delta_cov": 3761.0,
+      "actual_time": 3613.968341588974,
+      "start_cov": 970.0,
+      "end_cov": 4731.0,
+      "was_early_stopped": true,
+      "was_extended": true,
+      "extend_count": 3,
+      "wall_clock_total": 12823.69657444954
+    },
+    {
+      "gen": 4,
+      "delta_cov": 4826.0,
+      "actual_time": 6166.485141038895,
+      "start_cov": 500.0,
+      "end_cov": 5326.0,
+      "was_early_stopped": true,
+      "was_extended": true,
+      "extend_count": 4,
+      "wall_clock_total": 16740.485627412796
+    },
+    {
+      "gen": 5,
+      "delta_cov": 5106.0,
+      "actual_time": 7048.7742030620575,
+      "start_cov": 478.0,
+      "end_cov": 5584.0,
+      "was_early_stopped": false,
+      "was_extended": true,
+      "extend_count": 1,
+      "wall_clock_total": 19011.452713251114
+    }
+  ],
+  "total_elapsed": 69679.71207594872,
+  "total_fuzz_time": 23640.481677293777
+}

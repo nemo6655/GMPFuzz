@@ -1,0 +1,358 @@
+#!/usr/bin/env python3
+"""
+ase.py - Adaptive Synchronization Epoch (ASE) algorithm for GMPFuzz.
+
+This module computes the optimal epoch duration for each generation's
+parallel fuzzing phase, replacing the fixed 1800s timeout. It uses:
+
+  Phase A: Inter-generation scheduling (predict initial T based on history)
+  Phase B: Intra-generation monitoring (early stop / dynamic extend)
+  Phase C: History update for next generation
+
+Usage:
+    # At the start of a generation:
+    ase = ASEScheduler.load(state_file)
+    T_epoch = ase.predict_epoch(gen=2, num_total_gens=5)
+
+    # During fuzzing (called periodically by the monitor):
+    action = ase.check(t_elapsed, coverage_readings)
+    # action is "continue", "stop", or "extend"
+
+    # After epoch ends:
+    ase.record(gen=2, delta_cov=150, actual_time=1200)
+    ase.save(state_file)
+"""
+
+import json
+import math
+import os
+import time
+from dataclasses import dataclass, field, asdict
+from typing import List, Dict, Optional, Tuple
+
+
+@dataclass
+class ASEConfig:
+    """ASE algorithm parameters."""
+    T_min: int = 300          # Minimum epoch (seconds) - ensure AFL init + deterministic stage
+    T_max: int = 3600         # Maximum epoch (seconds) - prevent single-gen budget monopoly
+    T_default: int = 1800     # Default epoch when no history
+    T_budget: int = 86400     # Total time budget (24h default)
+    tau_stall: int = 120      # Stall tolerance window (seconds)
+    delta: int = 30           # Monitoring sample interval (seconds)
+    alpha: float = 0.3        # EWMA decay factor for growth rate smoothing
+    beta: float = 0.10        # Growth rate threshold (below = saturated)
+    gamma: float = 0.20       # LLM evolution boost coefficient
+    T_llm_estimate: int = 300 # Estimated LLM variant generation time per gen
+
+
+@dataclass
+class ASEHistory:
+    """Per-generation history record."""
+    gen: int
+    delta_cov: float       # Coverage gain (edges)
+    actual_time: float     # Actual epoch time used (seconds)
+    start_cov: float       # Coverage at epoch start
+    end_cov: float         # Coverage at epoch end
+    was_early_stopped: bool
+    was_extended: bool
+
+
+@dataclass
+class ASEState:
+    """Persistent state for ASE across generations."""
+    config: dict = field(default_factory=dict)
+    history: List[dict] = field(default_factory=list)
+    total_elapsed: float = 0.0  # Total wall-clock time consumed so far
+
+    @classmethod
+    def from_file(cls, path: str) -> 'ASEState':
+        if os.path.exists(path):
+            with open(path, 'r') as f:
+                data = json.load(f)
+            return cls(
+                config=data.get('config', {}),
+                history=data.get('history', []),
+                total_elapsed=data.get('total_elapsed', 0.0),
+            )
+        return cls()
+
+    def save(self, path: str):
+        os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+        with open(path, 'w') as f:
+            json.dump({
+                'config': self.config,
+                'history': self.history,
+                'total_elapsed': self.total_elapsed,
+            }, f, indent=2)
+
+
+class ASEScheduler:
+    """Adaptive Synchronization Epoch scheduler."""
+
+    def __init__(self, config: Optional[ASEConfig] = None, state: Optional[ASEState] = None):
+        self.cfg = config or ASEConfig()
+        self.state = state or ASEState()
+        # Runtime monitoring state (reset each epoch)
+        self._rho_bar: float = 1.0       # Smoothed growth rate
+        self._stall_count: int = 0        # Consecutive stall periods
+        self._prev_cov: Dict[str, float] = {}  # pool_id -> last coverage reading
+        self._current_T: float = 0.0      # Current epoch target
+        self._extended: bool = False
+        self._t_start: float = 0.0
+
+    @classmethod
+    def load(cls, state_file: str, config: Optional[ASEConfig] = None) -> 'ASEScheduler':
+        st = ASEState.from_file(state_file)
+        cfg = config or ASEConfig()
+        # Override config from state if present
+        if st.config:
+            for k, v in st.config.items():
+                if hasattr(cfg, k):
+                    setattr(cfg, k, type(getattr(cfg, k))(v))
+        return cls(config=cfg, state=st)
+
+    def save(self, state_file: str):
+        self.state.config = asdict(self.cfg)
+        self.state.save(state_file)
+
+    # ================================================================
+    # Phase A: Inter-generation scheduling (predict initial T)
+    # ================================================================
+
+    def predict_epoch(self, gen: int, num_total_gens: int) -> int:
+        """Predict the optimal epoch duration for generation `gen`.
+
+        Returns:
+            Epoch duration in seconds, clipped to [T_min, T_max].
+        """
+        cfg = self.cfg
+        history = self.state.history
+
+        if not history:
+            # No history: use default
+            T = cfg.T_default
+        else:
+            # Compute mean efficiency from history
+            efficiencies = []
+            for h in history:
+                t = h.get('actual_time', 1)
+                d = h.get('delta_cov', 0)
+                if t > 0:
+                    efficiencies.append(d / t)
+
+            r_bar = sum(efficiencies) / len(efficiencies) if efficiencies else 0.0
+
+            # LLM evolution boost: later generations have better seeds
+            if gen > 0 and r_bar > 0:
+                r_hat = r_bar * (1.0 + cfg.gamma)
+            else:
+                r_hat = max(r_bar, 0.001)
+
+            # Remaining budget
+            T_remain = cfg.T_budget - self.state.total_elapsed
+            gens_left = max(num_total_gens - gen, 1)
+
+            # Per-generation budget (including LLM time estimate)
+            T_per_gen = T_remain / gens_left
+            T = T_per_gen - cfg.T_llm_estimate
+
+            # Adjust based on whether previous gens were early-stopped
+            # If last gen was early-stopped, reduce; if extended, increase
+            if history:
+                last = history[-1]
+                if last.get('was_early_stopped', False):
+                    # Previous gen saturated quickly -> reduce this gen too
+                    T = min(T, last['actual_time'] * 1.2)
+                elif last.get('was_extended', False):
+                    # Previous gen was still productive -> give more time
+                    T = max(T, last['actual_time'] * 1.1)
+
+        T = int(max(cfg.T_min, min(T, cfg.T_max)))
+
+        # Store for monitoring phase
+        self._current_T = T
+        self._rho_bar = 1.0
+        self._stall_count = 0
+        self._prev_cov = {}
+        self._extended = False
+        self._t_start = time.time()
+
+        return T
+
+    # ================================================================
+    # Phase B: Intra-generation monitoring (early stop / extend)
+    # ================================================================
+
+    def check(self, t_elapsed: float, pool_coverages: Dict[str, float]) -> str:
+        """Check whether to continue, stop early, or extend the current epoch.
+
+        Args:
+            t_elapsed: Seconds elapsed since epoch start.
+            pool_coverages: {pool_id: current_edge_count} for each container.
+
+        Returns:
+            "continue" - keep running
+            "stop"     - early termination (all pools saturated)
+            "extend"   - epoch limit reached but still productive (extended)
+        """
+        cfg = self.cfg
+
+        if not pool_coverages:
+            return "continue"
+
+        # Compute per-pool growth rate
+        rho_max = 0.0
+        all_stalled = True
+
+        for pool_id, cov in pool_coverages.items():
+            prev = self._prev_cov.get(pool_id, cov)
+            if prev > 0:
+                rho = (cov - prev) / (prev + 1e-9)
+            else:
+                rho = 1.0 if cov > 0 else 0.0
+            rho_max = max(rho_max, rho)
+
+            if cov != prev:
+                all_stalled = False
+
+        # Update previous readings
+        self._prev_cov = dict(pool_coverages)
+
+        # EWMA smoothing
+        self._rho_bar = cfg.alpha * rho_max + (1.0 - cfg.alpha) * self._rho_bar
+
+        # --- Cond-1: Growth saturation check ---
+        if t_elapsed >= cfg.T_min:
+            if self._rho_bar < cfg.beta:
+                self._stall_count += 1
+                stall_threshold = math.ceil(cfg.tau_stall / cfg.delta)
+                if self._stall_count >= stall_threshold:
+                    return "stop"
+            else:
+                self._stall_count = 0
+
+            # --- Cond-2: All pools stalled ---
+            if all_stalled:
+                self._stall_count += 1
+                stall_threshold = math.ceil(cfg.tau_stall / cfg.delta)
+                if self._stall_count >= stall_threshold:
+                    return "stop"
+
+        # --- Cond-3: Dynamic extension ---
+        if t_elapsed >= 0.9 * self._current_T and not self._extended:
+            if self._rho_bar > 2 * cfg.beta:
+                self._current_T = min(self._current_T + cfg.tau_stall, cfg.T_max)
+                self._extended = True
+                return "extend"
+
+        return "continue"
+
+    def get_current_epoch_limit(self) -> float:
+        """Return the current (possibly extended) epoch time limit."""
+        return self._current_T
+
+    # ================================================================
+    # Phase C: History update
+    # ================================================================
+
+    def record(self, gen: int, start_cov: float, end_cov: float, actual_time: float):
+        """Record the results of a completed epoch."""
+        delta = end_cov - start_cov
+        was_early = actual_time < (self._current_T * 0.95)
+        was_ext = self._extended
+
+        entry = {
+            'gen': gen,
+            'delta_cov': delta,
+            'actual_time': actual_time,
+            'start_cov': start_cov,
+            'end_cov': end_cov,
+            'was_early_stopped': was_early,
+            'was_extended': was_ext,
+        }
+        self.state.history.append(entry)
+
+        # Update total elapsed (epoch time + estimated LLM time)
+        self.state.total_elapsed += actual_time + self.cfg.T_llm_estimate
+
+    def get_summary(self) -> str:
+        """Return a human-readable summary of ASE history."""
+        lines = ["ASE History:"]
+        for h in self.state.history:
+            flags = []
+            if h.get('was_early_stopped'):
+                flags.append("EARLY")
+            if h.get('was_extended'):
+                flags.append("EXTENDED")
+            flag_str = f" [{','.join(flags)}]" if flags else ""
+            lines.append(
+                f"  gen{h['gen']}: T={h['actual_time']:.0f}s, "
+                f"cov={h['start_cov']:.0f}->{h['end_cov']:.0f} "
+                f"(+{h['delta_cov']:.0f}){flag_str}"
+            )
+        if not self.state.history:
+            lines.append("  (no history)")
+        lines.append(f"  Total elapsed: {self.state.total_elapsed:.0f}s "
+                      f"/ {self.cfg.T_budget}s budget")
+        return "\n".join(lines)
+
+
+# ================================================================
+# CLI interface for testing
+# ================================================================
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description='ASE Scheduler CLI')
+    sub = parser.add_subparsers(dest='cmd')
+
+    p_predict = sub.add_parser('predict', help='Predict epoch for a generation')
+    p_predict.add_argument('--gen', type=int, required=True)
+    p_predict.add_argument('--total-gens', type=int, required=True)
+    p_predict.add_argument('--state-file', type=str, default='ase_state.json')
+    p_predict.add_argument('--T-budget', type=int, default=86400)
+    p_predict.add_argument('--T-min', type=int, default=300)
+    p_predict.add_argument('--T-max', type=int, default=3600)
+    p_predict.add_argument('--T-default', type=int, default=1800)
+
+    p_record = sub.add_parser('record', help='Record epoch results')
+    p_record.add_argument('--gen', type=int, required=True)
+    p_record.add_argument('--start-cov', type=float, required=True)
+    p_record.add_argument('--end-cov', type=float, required=True)
+    p_record.add_argument('--actual-time', type=float, required=True)
+    p_record.add_argument('--state-file', type=str, default='ase_state.json')
+
+    p_summary = sub.add_parser('summary', help='Print ASE history summary')
+    p_summary.add_argument('--state-file', type=str, default='ase_state.json')
+
+    args = parser.parse_args()
+
+    if args.cmd == 'predict':
+        cfg = ASEConfig(
+            T_budget=args.T_budget,
+            T_min=args.T_min,
+            T_max=args.T_max,
+            T_default=args.T_default,
+        )
+        ase = ASEScheduler.load(args.state_file, config=cfg)
+        T = ase.predict_epoch(gen=args.gen, num_total_gens=args.total_gens)
+        ase.save(args.state_file)
+        print(T)
+
+    elif args.cmd == 'record':
+        ase = ASEScheduler.load(args.state_file)
+        ase.record(
+            gen=args.gen,
+            start_cov=args.start_cov,
+            end_cov=args.end_cov,
+            actual_time=args.actual_time,
+        )
+        ase.save(args.state_file)
+        print(ase.get_summary())
+
+    elif args.cmd == 'summary':
+        ase = ASEScheduler.load(args.state_file)
+        print(ase.get_summary())
+
+    else:
+        parser.print_help()
