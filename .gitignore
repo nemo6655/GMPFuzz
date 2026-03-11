@@ -23,7 +23,9 @@ results/
 outputs/
 evaluation/
 *.log
-experiments/
+# results under experiments are generated during runs and should be ignored
+experiments/results*
+# (experiments/ contains important scripts and should not be ignored)
 # generated state directories inside presets
 preset/*/gen*
 preset/*/stamps
