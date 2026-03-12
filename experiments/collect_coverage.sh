@@ -13,7 +13,10 @@ while [[ $# -gt 0 ]]; do
         *) RESULTS_DIR="$1"; shift ;;
     esac
 done
-[ -z "$RESULTS_DIR" ] && RESULTS_DIR="$(pwd)/evaluation"
+if [ -z "$RESULTS_DIR" ]; then
+    _SDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    RESULTS_DIR="$(dirname "$_SDIR")/evaluation"
+fi
 
 SUMMARY_CSV="${RESULTS_DIR}/coverage_summary.csv"
 echo "========================================================"

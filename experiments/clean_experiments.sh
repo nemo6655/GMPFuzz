@@ -108,7 +108,8 @@ if $CLEAN_RESULTS; then
         # 默认清理常见结果目录
         SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
         DIRS_TO_CLEAN=()
-        for d in "$SCRIPT_DIR"/results_* "$(pwd)"/results "$(pwd)"/evaluation "$SCRIPT_DIR"/../evaluation; do
+        PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+        for d in "$SCRIPT_DIR"/results_* "$PROJECT_ROOT"/results "$PROJECT_ROOT"/evaluation; do
             [ -d "$d" ] && DIRS_TO_CLEAN+=("$d")
         done
     fi
@@ -127,29 +128,29 @@ else
     echo "[Step 2] 跳过结果清理 (使用 --results 启用)"
 fi
 
-# ---------------------------------------------------------
-# 3. 清理 Docker 镜像
-# ---------------------------------------------------------
-if $CLEAN_IMAGES; then
-    echo ""
-    echo "[Step 3] 清理 Docker 镜像..."
-    for img in "${IMAGES[@]}"; do
-        if docker image inspect "$img" >/dev/null 2>&1; then
-            echo "  删除镜像: $img"
-            run_cmd docker rmi -f "$img" 2>/dev/null || true
-        fi
-    done
-    # 清理悬空镜像
-    DANGLING=$(docker images -f "dangling=true" -q 2>/dev/null | wc -l)
-    if [ "$DANGLING" -gt 0 ]; then
-        echo "  清理 $DANGLING 个悬空镜像..."
-        run_cmd docker image prune -f >/dev/null 2>&1 || true
-    fi
-    echo "  镜像清理完成。"
-else
-    echo ""
-    echo "[Step 3] 跳过镜像清理 (使用 --images 启用)"
-fi
+# # ---------------------------------------------------------
+# # 3. 清理 Docker 镜像
+# # ---------------------------------------------------------
+# if $CLEAN_IMAGES; then
+#     echo ""
+#     echo "[Step 3] 清理 Docker 镜像..."
+#     for img in "${IMAGES[@]}"; do
+#         if docker image inspect "$img" >/dev/null 2>&1; then
+#             echo "  删除镜像: $img"
+#             run_cmd docker rmi -f "$img" 2>/dev/null || true
+#         fi
+#     done
+#     # 清理悬空镜像
+#     DANGLING=$(docker images -f "dangling=true" -q 2>/dev/null | wc -l)
+#     if [ "$DANGLING" -gt 0 ]; then
+#         echo "  清理 $DANGLING 个悬空镜像..."
+#         run_cmd docker image prune -f >/dev/null 2>&1 || true
+#     fi
+#     echo "  镜像清理完成。"
+# else
+#     echo ""
+#     echo "[Step 3] 跳过镜像清理 (使用 --images 启用)"
+# fi
 
 # ---------------------------------------------------------
 # 4. 清理临时文件

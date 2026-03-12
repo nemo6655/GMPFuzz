@@ -59,7 +59,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ -z "$OUTPUT_DIR" ]; then
-    OUTPUT_DIR="$(pwd)/evaluation/mpfuzz"
+    OUTPUT_DIR="$(dirname "$SCRIPT_DIR")/evaluation/mpfuzz"
 fi
 
 # Map target to Docker image and description
