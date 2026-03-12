@@ -139,13 +139,14 @@ cat > "${OUTPUT_DIR}/peach_config.json" << EOF
 EOF
 
 # ============================================================
-# Periodic status monitoring
+# Periodic status monitoring with timeout enforcement
 # ============================================================
 START_TIME=$(date +%s)
 while true; do
     sleep 600
 
-    ELAPSED=$(( $(date +%s) - START_TIME ))
+    NOW=$(date +%s)
+    ELAPSED=$(( NOW - START_TIME ))
     ELAPSED_H=$(echo "scale=1; $ELAPSED/3600" | bc)
 
     STILL_RUNNING=0
@@ -153,6 +154,11 @@ while true; do
         STATE=$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null || echo "false")
         if [ "$STATE" = "true" ]; then
             STILL_RUNNING=$((STILL_RUNNING + 1))
+            # enforce timeout per-container
+            if [ $ELAPSED -ge $TIMEOUT ]; then
+                echo "[$(date '+%H:%M:%S')] Timeout exceeded; killing $cid"
+                docker kill "$cid" >/dev/null 2>&1 || true
+            fi
         fi
     done
 

@@ -129,17 +129,26 @@ cat > "${OUTPUT_DIR}/mpfuzz_config.json" << EOF
 EOF
 
 # ============================================================
-# Periodic status monitoring
+# Periodic status monitoring (with timeout enforcement)
 # ============================================================
 START_TIME=$(date +%s)
 while true; do
     sleep 600
-    ELAPSED=$(( $(date +%s) - START_TIME ))
+    NOW=$(date +%s)
+    ELAPSED=$(( NOW - START_TIME ))
     ELAPSED_H=$(echo "scale=1; $ELAPSED/3600" | bc)
 
     STATE=$(docker inspect -f '{{.State.Running}}' "$CID_SHORT" 2>/dev/null || echo "false")
     if [ "$STATE" = "true" ]; then
         echo "[$(date '+%H:%M:%S')] Elapsed: ${ELAPSED_H}h | MPFuzz: RUNNING"
+        # if we've exceeded user timeout, kill container
+        if [ $ELAPSED -ge $TIMEOUT ]; then
+            echo "[$(date '+%H:%M:%S')] Timeout exceeded (${TIMEOUT}s); killing MPFuzz container"
+            docker kill "$CID_SHORT" >/dev/null 2>&1 || true
+            # allow a moment for the container to exit
+            sleep 5
+            continue
+        fi
     else
         echo "[$(date '+%H:%M:%S')] Elapsed: ${ELAPSED_H}h | MPFuzz: FINISHED"
         break
