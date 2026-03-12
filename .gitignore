@@ -44,3 +44,5 @@ fuzzbench/
 .DS_Store
 Thumbs.db
 benchmark/
+# backup files
+*.bak
