@@ -91,7 +91,7 @@ esac
 
 # Default output directory with timestamp
 if [ -z "$OUTPUT_DIR" ]; then
-    OUTPUT_DIR="${SCRIPT_DIR}/results_$(date +%Y%m%d_%H%M%S)"
+    OUTPUT_DIR="${SCRIPT_DIR}/../evaluation/results_$(date +%Y%m%d_%H%M%S)"
 fi
 mkdir -p "$OUTPUT_DIR"
 # Ensure absolute path so child scripts that cd elsewhere still work

@@ -64,7 +64,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ -z "$OUTPUT_DIR" ]; then
-    OUTPUT_DIR="$(pwd)/results/aflnet"
+    OUTPUT_DIR="$(pwd)/evaluation/aflnet"
 fi
 
 # =====================================================================

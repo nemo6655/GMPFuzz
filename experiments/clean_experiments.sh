@@ -108,7 +108,7 @@ if $CLEAN_RESULTS; then
         # 默认清理常见结果目录
         SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
         DIRS_TO_CLEAN=()
-        for d in "$SCRIPT_DIR"/results_* "$(pwd)"/results; do
+        for d in "$SCRIPT_DIR"/results_* "$(pwd)"/results "$(pwd)"/evaluation "$SCRIPT_DIR"/../evaluation; do
             [ -d "$d" ] && DIRS_TO_CLEAN+=("$d")
         done
     fi

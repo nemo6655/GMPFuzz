@@ -13,7 +13,7 @@ while [[ $# -gt 0 ]]; do
         *) RESULTS_DIR="$1"; shift ;;
     esac
 done
-[ -z "$RESULTS_DIR" ] && RESULTS_DIR="$(pwd)/results"
+[ -z "$RESULTS_DIR" ] && RESULTS_DIR="$(pwd)/evaluation"
 
 SUMMARY_CSV="${RESULTS_DIR}/coverage_summary.csv"
 echo "========================================================"

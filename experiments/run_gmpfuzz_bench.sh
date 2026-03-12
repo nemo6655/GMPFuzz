@@ -48,7 +48,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ -z "$OUTPUT_DIR" ]; then
-    OUTPUT_DIR="$(pwd)/results/gmpfuzz"
+    OUTPUT_DIR="$(pwd)/evaluation/gmpfuzz"
 fi
 
 # Convert to absolute path (script will cd to GMPFUZZ_DIR later)
