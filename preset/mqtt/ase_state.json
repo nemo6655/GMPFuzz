@@ -89,8 +89,19 @@
       "was_extended": true,
       "extend_count": 1,
       "wall_clock_total": 19011.452713251114
+    },
+    {
+      "gen": 6,
+      "delta_cov": 5319.0,
+      "actual_time": 7223.470893621445,
+      "start_cov": 511.0,
+      "end_cov": 5830.0,
+      "was_early_stopped": false,
+      "was_extended": false,
+      "extend_count": 0,
+      "wall_clock_total": 19966.562432527542
     }
   ],
-  "total_elapsed": 69679.71207594872,
-  "total_fuzz_time": 23640.481677293777
+  "total_elapsed": 89646.27450847626,
+  "total_fuzz_time": 30863.952570915222
 }

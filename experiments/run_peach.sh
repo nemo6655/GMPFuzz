@@ -98,7 +98,7 @@ echo "  Instances:  ${NUM_INSTANCES}"
 echo "  Timeout:    ${TIMEOUT}s ($(echo "scale=1; $TIMEOUT/3600" | bc)h)"
 echo "  Image:      ${IMAGE}"
 echo "  Output:     ${OUTPUT_DIR}"
-echo "  Coverage:   Edge + gcov (tcpdump pcap replay)"
+echo "  Coverage:   Edge (bitmap)"
 echo "  Start:      $(date '+%Y-%m-%d %H:%M:%S')"
 echo "========================================================"
 
@@ -133,7 +133,7 @@ cat > "${OUTPUT_DIR}/peach_config.json" << EOF
     "image": "${IMAGE}",
     "instances": ${NUM_INSTANCES},
     "timeout": ${TIMEOUT},
-    "coverage_type": "edge_and_gcov",
+    "coverage_type": "edge_bitmap",
     "start_time": "$(date -Iseconds)"
 }
 EOF
@@ -154,8 +154,8 @@ while true; do
         STATE=$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null || echo "false")
         if [ "$STATE" = "true" ]; then
             STILL_RUNNING=$((STILL_RUNNING + 1))
-            # enforce timeout per-container
-            if [ $ELAPSED -ge $TIMEOUT ]; then
+            # Kill container if timeout exceeded
+            if [ $ELAPSED -ge $((TIMEOUT + 120)) ]; then
                 echo "[$(date '+%H:%M:%S')] Timeout exceeded; killing $cid"
                 docker kill "$cid" >/dev/null 2>&1 || true
             fi
@@ -194,17 +194,6 @@ for cid in "${CIDS[@]}"; do
         echo "    Edge coverage CSV: OK (final edges: ${FINAL_EDGES:-N/A})"
     else
         echo "    WARNING: edge_coverage.csv not found"
-    fi
-
-    # Copy gcov coverage CSV (line/branch coverage from pcap replay)
-    if [ -f "${INSTANCE_DIR}/peach_output/cov_over_time.csv" ]; then
-        cp "${INSTANCE_DIR}/peach_output/cov_over_time.csv" "${INSTANCE_DIR}/cov_over_time.csv"
-        GCOV_FINAL=$(tail -1 "${INSTANCE_DIR}/cov_over_time.csv")
-        GCOV_L=$(echo "$GCOV_FINAL" | cut -d',' -f2)
-        GCOV_B=$(echo "$GCOV_FINAL" | cut -d',' -f4)
-        echo "    gcov coverage: OK (lines: ${GCOV_L}%, branches: ${GCOV_B}%)"
-    else
-        echo "    WARNING: cov_over_time.csv not found (gcov coverage unavailable)"
     fi
 
     # Copy crash logs

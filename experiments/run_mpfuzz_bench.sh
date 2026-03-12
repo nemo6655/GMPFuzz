@@ -7,8 +7,7 @@
 # (2 pub + 2 sub), so only ONE container is needed.
 #
 # NOTE: MPFuzz does NOT save replayable test cases. It collects
-# edge coverage via shared memory instrumentation only.
-# gcov-based line/branch coverage is NOT available for MPFuzz.
+# edge coverage via shared memory instrumentation (bitmap) only.
 #
 # Usage: ./run_mpfuzz_bench.sh [options]
 #   -t, --target TARGET    Fuzzing target: mqtt, mongoose, nanomq (default: mqtt)
@@ -96,7 +95,7 @@ echo "  Parallelism: 4 internal agents (2 pub + 2 sub)"
 echo "  Timeout:    ${TIMEOUT}s ($(echo "scale=1; $TIMEOUT/3600" | bc)h)"
 echo "  Image:      ${IMAGE}"
 echo "  Output:     ${OUTPUT_DIR}"
-echo "  Coverage:   Edge + gcov (tcpdump pcap replay)"
+echo "  Coverage:   Edge (bitmap)"
 echo "  Start:      $(date '+%Y-%m-%d %H:%M:%S')"
 echo "========================================================"
 
@@ -123,7 +122,7 @@ cat > "${OUTPUT_DIR}/mpfuzz_config.json" << EOF
     "instances": 1,
     "internal_agents": 4,
     "timeout": ${TIMEOUT},
-    "coverage_type": "edge_and_gcov",
+    "coverage_type": "edge_bitmap",
     "start_time": "$(date -Iseconds)"
 }
 EOF
@@ -141,11 +140,10 @@ while true; do
     STATE=$(docker inspect -f '{{.State.Running}}' "$CID_SHORT" 2>/dev/null || echo "false")
     if [ "$STATE" = "true" ]; then
         echo "[$(date '+%H:%M:%S')] Elapsed: ${ELAPSED_H}h | MPFuzz: RUNNING"
-        # if we've exceeded user timeout, kill container
-        if [ $ELAPSED -ge $TIMEOUT ]; then
-            echo "[$(date '+%H:%M:%S')] Timeout exceeded (${TIMEOUT}s); killing MPFuzz container"
+        # Kill container if timeout exceeded
+        if [ $ELAPSED -ge $((TIMEOUT + 120)) ]; then
+            echo "[$(date '+%H:%M:%S')] Timeout exceeded (${TIMEOUT}s + 120s grace); killing MPFuzz container"
             docker kill "$CID_SHORT" >/dev/null 2>&1 || true
-            # allow a moment for the container to exit
             sleep 5
             continue
         fi
@@ -175,17 +173,6 @@ if [ -f "${INSTANCE_DIR}/mpfuzz_output/edge_coverage.csv" ]; then
     echo "    Edge coverage: OK (final edges: ${FINAL_EDGES:-N/A})"
 else
     echo "    WARNING: edge_coverage.csv not found"
-fi
-
-# Copy gcov coverage CSV (line/branch coverage from pcap replay)
-if [ -f "${INSTANCE_DIR}/mpfuzz_output/cov_over_time.csv" ]; then
-    cp "${INSTANCE_DIR}/mpfuzz_output/cov_over_time.csv" "${INSTANCE_DIR}/cov_over_time.csv"
-    GCOV_FINAL=$(tail -1 "${INSTANCE_DIR}/cov_over_time.csv")
-    GCOV_L=$(echo "$GCOV_FINAL" | cut -d',' -f2)
-    GCOV_B=$(echo "$GCOV_FINAL" | cut -d',' -f4)
-    echo "    gcov coverage: OK (lines: ${GCOV_L}%, branches: ${GCOV_B}%)"
-else
-    echo "    WARNING: cov_over_time.csv not found (gcov coverage unavailable)"
 fi
 
 docker logs "$CID_SHORT" > "${INSTANCE_DIR}/container.log" 2>&1 || true

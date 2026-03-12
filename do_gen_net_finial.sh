@@ -12,7 +12,7 @@ set -euo pipefail
 prev_gen="$1"
 next_gen="$2"
 
-num_gens=$(./elmconfig.py get run.num_generations)
+num_gens=$(./elmconfig.py get run.max_generations 2>/dev/null || ./elmconfig.py get run.num_generations 2>/dev/null || echo 20)
 
 MODELS=$(./elmconfig.py get model.names)
 NUM_VARIANTS=$(./elmconfig.py get cli.genvariants_parallel.num_variants)

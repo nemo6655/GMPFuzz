@@ -208,12 +208,12 @@ export NUM_GENERATIONS="${NUM_GENS}"
 EXIT_CODE=${PIPESTATUS[0]}
 
 if [ "$EXIT_CODE" -ne 0 ]; then
-    echo "[$(date '+%H:%M:%S')] ERROR: GMPFuzz exited with code ${EXIT_CODE}"
-    echo "Check log: ${LOG_FILE}"
-    exit $EXIT_CODE
+    echo "[$(date '+%H:%M:%S')] WARNING: GMPFuzz evolutionary loop exited with code ${EXIT_CODE}"
+    echo "  This may be expected (budget exhaustion, ASE stop, etc.)"
+    echo "  Continuing to collect results from completed generations..."
+else
+    echo "[$(date '+%H:%M:%S')] GMPFuzz evolutionary loop completed successfully."
 fi
-
-echo "[$(date '+%H:%M:%S')] GMPFuzz evolutionary loop completed successfully."
 
 # =====================================================================
 # Step 2: Collect results into evaluation directory
@@ -252,98 +252,60 @@ if [ -d "${RUNDIR}/initial" ]; then
 fi
 
 # =====================================================================
-# Step 3: Extract replayable-queue from all generations
+# Step 3: Extract edge coverage from all generations' plot_data
 # =====================================================================
-echo "[$(date '+%H:%M:%S')] Extracting replayable-queue from all generations..."
-MERGED_QUEUE="${EVAL_DIR}/merged_queue"
-mkdir -p "$MERGED_QUEUE/replayable-queue"
-QUEUE_COUNT=0
+echo "[$(date '+%H:%M:%S')] Extracting edge coverage from AFLNet plot_data..."
+EDGE_CSV="${EVAL_DIR}/edge_coverage.csv"
+echo "timestamp,edge_count" > "$EDGE_CSV"
 
+TARBALL_COUNT=0
 for gen_dir in "${EVAL_DIR}"/gen*/aflnetout; do
     if [ ! -d "$gen_dir" ]; then continue; fi
     gen_name=$(basename "$(dirname "$gen_dir")")
     for tarball in "${gen_dir}"/aflnetout_*.tar.gz; do
         if [ ! -f "$tarball" ]; then continue; fi
         base=$(basename "$tarball" .tar.gz)
+        TARBALL_COUNT=$((TARBALL_COUNT + 1))
 
-        # Extract replayable-queue from tarball into merged directory
-        tar -xzf "$tarball" -C "$MERGED_QUEUE/replayable-queue" \
-            --strip-components=2 "${base}/replayable-queue" 2>/dev/null || true
+        # Extract plot_data from tarball and convert map_size% to edge count
+        # plot_data format: timestamp, cycles, cur_path, paths_total, pending, pending_favs, map_size%, crashes, hangs, depth, execs
+        tar -xzf "$tarball" -O "${base}/plot_data" 2>/dev/null | \
+            grep -v "^#" | while IFS=',' read -r ts cycles cur_path paths pending pfavs map_pct rest; do
+                ts=$(echo "$ts" | tr -d ' ')
+                map_pct=$(echo "$map_pct" | tr -d ' %')
+                if [ -n "$ts" ] && [ -n "$map_pct" ]; then
+                    # Convert map_size percentage to absolute edge count (bitmap size = 65536)
+                    edges=$(echo "$map_pct * 65536 / 100" | bc 2>/dev/null | cut -d'.' -f1)
+                    echo "${ts},${edges:-0}" >> "$EDGE_CSV"
+                fi
+            done
+        echo "  ${gen_name}/${base}: extracted plot_data"
     done
-    count=$(find "$MERGED_QUEUE/replayable-queue" -maxdepth 1 -type f 2>/dev/null | wc -l)
-    echo "  After ${gen_name}: ${count} total queue entries"
 done
 
-QUEUE_COUNT=$(find "$MERGED_QUEUE/replayable-queue" -maxdepth 1 -type f 2>/dev/null | wc -l)
-echo "  Total merged queue entries: ${QUEUE_COUNT}"
-
-# =====================================================================
-# Step 4: Collect final code coverage via gcov replay
-# =====================================================================
-if [ -d "$MERGED_QUEUE/replayable-queue" ] && [ "$QUEUE_COUNT" -gt 0 ]; then
-    echo "[$(date '+%H:%M:%S')] Collecting final code coverage from merged queue..."
-    COV_CSV="${EVAL_DIR}/cov_over_time_${TARGET}_${TEST_NUMBER}.csv"
-
-    # Remove stale CSV from previous runs (prevent contamination)
-    rm -f "${MERGED_QUEUE}/cov_over_time.csv"
-
-    # Use a named container to prevent duplicate concurrent runs
-    COV_CONTAINER="gmpfuzz_cov_${TARGET}_${TEST_NUMBER}"
-    docker rm -f "$COV_CONTAINER" 2>/dev/null || true
-
-    # Run cov_script inside Docker: replay all test cases through gcov-instrumented target
-    COV_CID=$(docker run -d \
-        --name "$COV_CONTAINER" \
-        -v "${MERGED_QUEUE}":/home/ubuntu/input \
-        --entrypoint /bin/bash \
-        "${IMAGE_NAME}" \
-        -c "cov_script /home/ubuntu/input 1883 30 /home/ubuntu/input/cov_over_time.csv 1")
-
-    if [ -n "$COV_CID" ]; then
-        echo "  Coverage container started: ${COV_CID:0:12}"
-        echo "  Replaying ${QUEUE_COUNT} test cases through gcov-instrumented ${TARGET}..."
-        docker wait "$COV_CID" 2>/dev/null || true
-
-        # Show container output
-        echo "  --- cov_script output ---"
-        docker logs "$COV_CID" 2>&1 | tail -5
-        echo "  --- end ---"
-
-        # Copy coverage CSV back from the bind mount
-        if [ -f "${MERGED_QUEUE}/cov_over_time.csv" ]; then
-            cp "${MERGED_QUEUE}/cov_over_time.csv" "$COV_CSV"
-            echo "  Coverage CSV: ${COV_CSV}"
-
-            # Print final coverage summary
-            LAST_LINE=$(tail -1 "$COV_CSV")
-            if [ -n "$LAST_LINE" ] && [ "$LAST_LINE" != "Time,l_per,l_abs,b_per,b_abs" ]; then
-                L_PER=$(echo "$LAST_LINE" | cut -d',' -f2)
-                L_ABS=$(echo "$LAST_LINE" | cut -d',' -f3)
-                B_PER=$(echo "$LAST_LINE" | cut -d',' -f4)
-                B_ABS=$(echo "$LAST_LINE" | cut -d',' -f5)
-                echo ""
-                echo "  ┌─────────────────────────────────────┐"
-                echo "  │       Final Coverage Summary        │"
-                echo "  ├─────────────────────────────────────┤"
-                echo "  │  Line Coverage:   ${L_PER}% (${L_ABS} lines)  "
-                echo "  │  Branch Coverage: ${B_PER}% (${B_ABS} branches)"
-                echo "  │  Queue Entries:   ${QUEUE_COUNT}              "
-                echo "  └─────────────────────────────────────┘"
-                echo ""
-            fi
-        else
-            echo "  WARNING: Coverage CSV not found after container run."
-            echo "  Container logs:"
-            docker logs "$COV_CID" 2>&1 | tail -20
-        fi
-
-        docker rm "$COV_CONTAINER" 2>/dev/null || true
-    else
-        echo "  ERROR: Failed to start coverage container."
-    fi
-else
-    echo "[$(date '+%H:%M:%S')] Skipping coverage collection (no queue entries)."
+# Sort by timestamp and deduplicate (keep max edge count per timestamp)
+if [ "$TARBALL_COUNT" -gt 0 ]; then
+    TMPCSV=$(mktemp)
+    head -1 "$EDGE_CSV" > "$TMPCSV"
+    tail -n +2 "$EDGE_CSV" | sort -t',' -k1,1n | \
+        awk -F',' 'NR==1{print; next} $2>max{max=$2; print}' >> "$TMPCSV"
+    mv "$TMPCSV" "$EDGE_CSV"
 fi
+
+EDGE_LINES=$(($(wc -l < "$EDGE_CSV") - 1))
+FINAL_EDGES=$(tail -1 "$EDGE_CSV" | cut -d',' -f2)
+echo "  Total data points: ${EDGE_LINES}"
+echo "  Final edge count: ${FINAL_EDGES:-N/A}"
+echo ""
+echo "  ┌─────────────────────────────────────┐"
+echo "  │       Edge Coverage Summary         │"
+echo "  ├─────────────────────────────────────┤"
+echo "  │  Final edges:    ${FINAL_EDGES:-N/A} (of 65536)     "
+echo "  │  Map density:    $(echo "scale=2; ${FINAL_EDGES:-0} * 100 / 65536" | bc 2>/dev/null || echo "N/A")%           "
+echo "  │  Tarballs:       ${TARBALL_COUNT}                "
+echo "  │  Data points:    ${EDGE_LINES}                "
+echo "  └─────────────────────────────────────┘"
+echo ""
 
 # =====================================================================
 # Step 5: Create archive
@@ -367,12 +329,11 @@ echo "========================================================"
 echo "Test Number:     ${TEST_NUMBER}"
 echo "Ablation Mode:   ${ABLATION_MODE}"
 echo "Generations:     ${NUM_GENS}"
-echo "Queue Entries:   ${QUEUE_COUNT}"
 echo "End Time:        $(date '+%Y-%m-%d %H:%M:%S')"
 echo "Evaluation Dir:  ${EVAL_DIR}"
 echo "Archive:         ${EVAL_DIR}/${ARCHIVE_NAME}"
 echo "Log:             ${LOG_FILE}"
-if [ -f "${EVAL_DIR}/cov_over_time_${TARGET}_${TEST_NUMBER}.csv" ]; then
-    echo "Coverage CSV:    ${EVAL_DIR}/cov_over_time_${TARGET}_${TEST_NUMBER}.csv"
+if [ -f "${EVAL_DIR}/edge_coverage.csv" ]; then
+    echo "Edge CSV:        ${EVAL_DIR}/edge_coverage.csv"
 fi
 echo "========================================================"
