@@ -35,8 +35,9 @@ run:
 ase:
   enabled: true           # Set to false to use fixed 1800s timeout
   T_min: 1800             # Minimum epoch duration (30 min floor for meaningful fuzzing)
-  T_max: 7200             # Maximum epoch duration (2 hours cap per generation)
+  T_max: 36000            # Maximum epoch duration (10 hours cap per generation)
   T_default: 3600         # Default epoch when no history (1 hour)
+  T_increment: 3600       # Minimum time increase per generation (1 hour)
   T_budget: 86400         # Total time budget (24 hours)
   tau_stall: 300           # Stall tolerance window (5 min, not 2)
   delta: 30               # Monitoring sample interval (seconds)

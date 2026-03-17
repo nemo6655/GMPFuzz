@@ -102,6 +102,12 @@ else
     done
 fi
 
+# Reset ASE state when starting fresh (prevents stale budget from previous runs)
+if [ $start_gen -eq -1 ] && [ "$should_clean" == "True" ] && [ -f "$ASE_STATE_FILE" ]; then
+    echo "Removing stale ASE state: $ASE_STATE_FILE"
+    rm -f "$ASE_STATE_FILE"
+fi
+
 # Step 1: Build the Docker image
 if [ "$TYPE" == "profuzzbench" ]; then
     python prepare_fuzzbench_net.py -t profuzzbench

@@ -35,8 +35,9 @@ run:
 ase:
   enabled: true
   T_min: 1800
-  T_max: 7200
+  T_max: 36000            # Maximum epoch duration (10 hours cap)
   T_default: 3600
+  T_increment: 3600        # Minimum time increase per generation (1 hour)
   T_budget: 86400
   tau_stall: 300
   delta: 30

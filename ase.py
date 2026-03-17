@@ -46,7 +46,7 @@ from typing import List, Dict, Optional, Tuple
 class ASEConfig:
     """ASE algorithm parameters."""
     T_min: int = 1800         # Minimum epoch (seconds) - 30 min floor for meaningful fuzzing
-    T_max: int = 7200         # Maximum epoch (seconds) - 2 hours cap per generation
+    T_max: int = 36000        # Maximum epoch (seconds) - 10 hours cap per generation
     T_default: int = 3600     # Default epoch when no history (1 hour)
     T_budget: int = 86400     # Total time budget (24h default)
     tau_stall: int = 300      # Stall tolerance window (5 minutes)
@@ -56,6 +56,7 @@ class ASEConfig:
     gamma: float = 0.15       # LLM evolution boost coefficient
     T_llm_estimate: int = 2400  # Estimated LLM time per gen (40 min, realistic)
     min_fuzzing_ratio: float = 0.5  # At least 50% of budget should be fuzzing time
+    T_increment: int = 3600   # Minimum time increment per generation (1 hour)
 
 
 @dataclass
@@ -82,14 +83,21 @@ class ASEState:
     @classmethod
     def from_file(cls, path: str) -> 'ASEState':
         if os.path.exists(path):
-            with open(path, 'r') as f:
-                data = json.load(f)
-            return cls(
-                config=data.get('config', {}),
-                history=data.get('history', []),
-                total_elapsed=data.get('total_elapsed', 0.0),
-                total_fuzz_time=data.get('total_fuzz_time', 0.0),
-            )
+            try:
+                with open(path, 'r') as f:
+                    content = f.read().strip()
+                if not content:
+                    return cls()
+                data = json.loads(content)
+                return cls(
+                    config=data.get('config', {}),
+                    history=data.get('history', []),
+                    total_elapsed=data.get('total_elapsed', 0.0),
+                    total_fuzz_time=data.get('total_fuzz_time', 0.0),
+                )
+            except (json.JSONDecodeError, ValueError, KeyError) as e:
+                print(f"[ASE] Warning: corrupted state file {path}, starting fresh: {e}")
+                return cls()
         return cls()
 
     def save(self, path: str):
@@ -142,15 +150,15 @@ class ASEScheduler:
     def predict_epoch(self, gen: int, num_total_gens: int = 0) -> int:
         """Predict the optimal epoch duration for generation `gen`.
 
-        With dynamic generation count, num_total_gens is used as a HINT
-        (max generations), not a hard limit. The actual number of future
-        generations is estimated from the remaining budget.
+        Follows TDPFuzz's design: later generations produce more seeds from
+        LLM evolution and need progressively more time for thorough fuzzing.
+        Each generation's epoch is guaranteed to be at least T_increment
+        longer than the previous generation's actual fuzzing time.
 
-        The algorithm ensures:
-        1. Each generation gets at least T_min fuzzing time
-        2. Budget is fairly distributed across estimated remaining generations
-        3. Historical performance informs but does NOT dominate scheduling
-        4. Early-stopped generations do NOT cascade into shorter epochs
+        The algorithm uses a triangular-number allocation scheme:
+          - gen0 gets weight 1, gen1 gets weight 2, ..., genN gets weight N+1
+          - This naturally allocates more time to later generations
+          - A hard floor ensures at least prev_time + T_increment per gen
 
         Returns:
             Epoch duration in seconds, clipped to [T_min, T_max].
@@ -158,27 +166,46 @@ class ASEScheduler:
         cfg = self.cfg
         history = self.state.history
 
-        # --- Dynamic budget-fair allocation ---
+        # --- Remaining fuzzing budget ---
         T_remain = max(cfg.T_budget - self.state.total_elapsed, 0)
 
-        # Estimate how many more generations we can run
-        gens_left = self._estimate_remaining_gens(gen, num_total_gens)
-
-        # Per-gen cost = LLM + fuzz + overhead; reserve LLM for remaining gens
-        T_llm_total = cfg.T_llm_estimate * gens_left
-        T_fuzz_remain = max(T_remain - T_llm_total, cfg.T_min * gens_left)
-
-        # Fair share: divide remaining fuzzing budget equally
-        T_fair = T_fuzz_remain / gens_left
-
         if not history:
-            # No history: use default (generous first epoch)
-            T = max(cfg.T_default, T_fair)
+            # First generation: use T_default as the baseline
+            T = max(cfg.T_default, cfg.T_min)
         else:
-            # Use history to adjust, but T_fair is the baseline
-            T = T_fair
+            # --- Monotonic increasing with guaranteed increment ---
+            # Get the MAXIMUM epoch time from all previous generations.
+            # Use max(actual_time, predicted_epoch) per gen to prevent
+            # regression when early-stop causes actual << predicted.
+            prev_max_time = max(
+                max(h.get('actual_time', cfg.T_min),
+                    h.get('predicted_epoch', h.get('actual_time', cfg.T_min)))
+                for h in history
+            )
 
-            # Boost if previous generations showed good coverage gains
+            # Hard floor: at least prev_max_time + T_increment
+            T_floor = prev_max_time + cfg.T_increment
+
+            # --- Triangular budget-proportional allocation ---
+            # Weight for each generation = gen_index + 1
+            # This gives later generations proportionally more time
+            gens_left = self._estimate_remaining_gens(gen, num_total_gens)
+            total_future_gens = gens_left  # including current gen
+
+            # Triangular weight for current gen relative to remaining gens
+            # Current gen is the first of the remaining, so weight = gen + 1
+            current_weight = gen + 1
+            # Sum of weights for all remaining gens: sum(gen+1 .. gen+gens_left)
+            total_weight = sum(range(gen + 1, gen + 1 + total_future_gens))
+            total_weight = max(total_weight, 1)
+
+            T_proportional = T_remain * (current_weight / total_weight)
+
+            # Take the maximum of proportional allocation and the increment floor
+            T = max(T_proportional, T_floor)
+
+            # Coverage efficiency boost: if recent gen was highly productive,
+            # give extra time
             recent = history[-1]
             if recent.get('delta_cov', 0) > 0 and recent.get('actual_time', 0) > 0:
                 recent_efficiency = recent['delta_cov'] / recent['actual_time']
@@ -187,20 +214,24 @@ class ASEScheduler:
                     for h in history
                 ) / len(history)
 
-                # If recent efficiency is above average, give slightly more time
                 if recent_efficiency > avg_efficiency * 1.2:
-                    T = T * 1.15
+                    T = T * 1.1
 
-            # LLM evolution boost: later generations have evolved seeds
-            if gen > 0:
-                gens_done = len(history)
-                total_est = gens_done + gens_left
-                T = T * (1.0 + cfg.gamma * min(gen / max(total_est, 1), 1.0))
+        # Final clipping: T_min floor and T_max cap
+        # Also ensure we don't exceed remaining budget
+        T = int(max(cfg.T_min, min(T, cfg.T_max, T_remain)))
 
-            # IMPORTANT: Do NOT reduce time based on early stops
-            # (the old algorithm did this, causing the cascade problem)
-
-        T = int(max(cfg.T_min, min(T, cfg.T_max)))
+        # FINAL SAFETY: enforce monotonic increase over previous gen
+        # Even after clipping, T must be > prev_max_time (if budget allows)
+        if history:
+            prev_max_time = max(
+                max(h.get('actual_time', cfg.T_min),
+                    h.get('predicted_epoch', h.get('actual_time', cfg.T_min)))
+                for h in history
+            )
+            min_required = prev_max_time + cfg.T_increment
+            if T < min_required and T_remain >= min_required:
+                T = int(min(min_required, cfg.T_max, T_remain))
 
         # Store for monitoring phase
         self._current_T = T
@@ -218,27 +249,41 @@ class ASEScheduler:
     def _estimate_remaining_gens(self, current_gen: int, max_gens: int = 0) -> int:
         """Estimate how many more generations can fit in the remaining budget.
 
-        Uses historical average wall-clock time per generation if available,
-        otherwise uses T_default + T_llm_estimate as the estimate.
+        Accounts for the increasing time per generation: each future gen
+        will need at least T_increment more than the previous one.
+        Uses a triangular-sum approach to estimate how many generations
+        can fit in the remaining budget.
         """
         cfg = self.cfg
         T_remain = max(cfg.T_budget - self.state.total_elapsed, 0)
         history = self.state.history
 
+        # Determine the baseline time for the next generation
         if history:
-            # Average wall-clock time per generation from actual data
-            avg_wall = sum(
-                h.get('wall_clock_total', h.get('actual_time', cfg.T_default) + cfg.T_llm_estimate)
+            prev_max_time = max(
+                max(h.get('actual_time', cfg.T_min),
+                    h.get('predicted_epoch', h.get('actual_time', cfg.T_min)))
                 for h in history
-            ) / len(history)
+            )
+            next_base = prev_max_time + cfg.T_increment
         else:
-            # First generation: estimate from defaults
-            avg_wall = cfg.T_default + cfg.T_llm_estimate
+            next_base = cfg.T_default
 
-        # Ensure minimum per-gen estimate (T_min + some LLM time)
-        avg_wall = max(avg_wall, cfg.T_min + cfg.T_llm_estimate * 0.5)
+        next_base = max(next_base, cfg.T_min)
 
-        gens_left = max(int(T_remain / avg_wall), 1)
+        # Count how many generations fit with increasing time:
+        # gen_k needs next_base + k * T_increment seconds
+        # Total for N gens = N * next_base + T_increment * N*(N-1)/2
+        gens_left = 0
+        cumulative = 0.0
+        for k in range(100):  # safety upper bound
+            t_gen = next_base + k * cfg.T_increment
+            if cumulative + t_gen > T_remain:
+                break
+            cumulative += t_gen
+            gens_left += 1
+
+        gens_left = max(gens_left, 1)
 
         # Apply max_gens cap if specified (remaining from max)
         if max_gens > 0:
@@ -272,8 +317,22 @@ class ASEScheduler:
 
         T_remain = max(cfg.T_budget - self.state.total_elapsed, 0)
 
-        # Minimum cost for one more generation
-        T_min_gen = cfg.T_min + cfg.T_llm_estimate + 300  # fuzz + LLM + overhead
+        # Minimum cost for one more generation: must be at least
+        # prev_max_time + T_increment (monotonic increasing requirement)
+        history = self.state.history
+        if history:
+            prev_max_time = max(
+                max(h.get('actual_time', cfg.T_min),
+                    h.get('predicted_epoch', h.get('actual_time', cfg.T_min)))
+                for h in history
+            )
+            T_min_gen = prev_max_time + cfg.T_increment + 300
+            # Also check: if the required epoch exceeds T_max, we can no
+            # longer guarantee monotonic increase, so stop.
+            if prev_max_time + cfg.T_increment > cfg.T_max:
+                return False
+        else:
+            T_min_gen = cfg.T_min + 300  # fuzz floor + overhead
 
         return T_remain >= T_min_gen
 
@@ -387,10 +446,11 @@ class ASEScheduler:
             gen: Generation number.
             start_cov: Coverage at epoch start.
             end_cov: Coverage at epoch end.
-            actual_time: Actual fuzzing time in seconds.
+            actual_time: Actual fuzzing time in seconds (aflnet only).
             wall_clock_total: Total wall-clock time for this generation
                               (including LLM, seed selection, etc.).
-                              If 0, falls back to actual_time + T_llm_estimate.
+                              Stored for reference but NOT used for budget
+                              accounting; budget is tracked by fuzzing time only.
         """
         delta = end_cov - start_cov
         was_early = actual_time < (self._current_T * 0.95) if self._current_T > 0 else False
@@ -398,6 +458,7 @@ class ASEScheduler:
 
         entry = {
             'gen': gen,
+            'predicted_epoch': self._current_T,  # Save predicted T for monotonic floor
             'delta_cov': delta,
             'actual_time': actual_time,
             'start_cov': start_cov,
@@ -410,12 +471,10 @@ class ASEScheduler:
         }
         self.state.history.append(entry)
 
-        # Update total elapsed using actual wall-clock time (not estimate)
-        if wall_clock_total > 0:
-            self.state.total_elapsed += wall_clock_total
-        else:
-            self.state.total_elapsed += actual_time + self.cfg.T_llm_estimate
-
+        # Budget accounting: only count actual aflnet fuzzing time.
+        # LLM / seed-selection time is excluded so it does not consume
+        # the fuzzing budget.
+        self.state.total_elapsed += actual_time
         self.state.total_fuzz_time += actual_time
 
     def get_summary(self) -> str:
@@ -435,10 +494,10 @@ class ASEScheduler:
             )
         if not self.state.history:
             lines.append("  (no history)")
-        lines.append(f"  Total elapsed: {self.state.total_elapsed:.0f}s "
+        lines.append(f"  Total fuzz budget used: {self.state.total_elapsed:.0f}s "
                       f"/ {self.cfg.T_budget}s budget")
         lines.append(f"  Total fuzz time: {self.state.total_fuzz_time:.0f}s "
-                      f"({self.state.total_fuzz_time/max(self.state.total_elapsed,1)*100:.0f}% of elapsed)")
+                      f"(LLM time excluded from budget accounting)")
         return "\n".join(lines)
 
 
@@ -456,8 +515,9 @@ if __name__ == '__main__':
     p_predict.add_argument('--state-file', type=str, default='ase_state.json')
     p_predict.add_argument('--T-budget', type=int, default=86400)
     p_predict.add_argument('--T-min', type=int, default=1800)
-    p_predict.add_argument('--T-max', type=int, default=7200)
+    p_predict.add_argument('--T-max', type=int, default=36000)
     p_predict.add_argument('--T-default', type=int, default=3600)
+    p_predict.add_argument('--T-increment', type=int, default=3600)
 
     p_record = sub.add_parser('record', help='Record epoch results')
     p_record.add_argument('--gen', type=int, required=True)
@@ -483,6 +543,7 @@ if __name__ == '__main__':
             T_min=args.T_min,
             T_max=args.T_max,
             T_default=args.T_default,
+            T_increment=args.T_increment,
         )
         ase = ASEScheduler.load(args.state_file, config=cfg)
         T = ase.predict_epoch(gen=args.gen, num_total_gens=args.total_gens)

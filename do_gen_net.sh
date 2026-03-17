@@ -28,9 +28,6 @@ PROTOCOL_TYPE=$(./elmconfig.py get protocol_type)
 GMPFUZZ_FORBIDDEN="${GMPFUZZ_FORBIDDEN:-}"
 GMPFUZZ_ASE="${GMPFUZZ_ASE:-1}"
 
-# Record wall-clock start time for this generation (used by ASE for accurate budgeting)
-GEN_START_EPOCH=$(date +%s)
-
 COLOR_RED='\033[0;31m'
 COLOR_GREEN='\033[0;32m'
 COLOR_YELLOW='\033[0;33m'
@@ -167,16 +164,17 @@ for model_name in $MODELS; do
 
         # Generate LLM variants (skip if NOSM in GMPFUZZ_FORBIDDEN)
         if [[ "$GMPFUZZ_FORBIDDEN" != *"NOSM"* ]]; then
-            python genvariants_parallel_net.py \
+            # Use 'timeout' to prevent indefinitely hanging due to pipe deadlocks or unclosed sockets
+            timeout -k 60 3600 bash -c "python genvariants_parallel_net.py \
                 $VARIANT_ARGS \
-                -M "${model_name}" \
-                -O "${GVOUT}/${state_name}/" \
-                -L "${GVLOG}" \
-                "${GVOUT}"/${state_name}/*.py \
+                -M \"${model_name}\" \
+                -O \"${GVOUT}/${state_name}/\" \
+                -L \"${GVLOG}\" \
+                \"${GVOUT}\"/${state_name}/*.py \
             | python genoutputs_net.py \
-                -L "${GOLOG}" \
-                -O "${GOOUT}/${state_name}/" \
-                -g "${prev_gen}"
+                -L \"${GOLOG}\" \
+                -O \"${GOOUT}/${state_name}/\" \
+                -g \"${prev_gen}\"" || echo "[WARN] Timeout evaluating LLM generations for pool ${state_name}!"
         fi
 
         # Copy original raw seeds to output directory
@@ -189,6 +187,9 @@ done
 # =====================================================================
 echo "Collecting coverage of the generators"
 all_models_genout_dir=$(realpath -m "$GOOUT")
+
+# Record start time immediately before aflnet launch (LLM time excluded)
+GEN_START_EPOCH=$(date +%s)
 
 case "$TYPE" in
     profuzzbench|docker)

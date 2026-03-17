@@ -34,9 +34,11 @@ NUM_INSTANCES=4
 TIMEOUT=86400
 OUTPUT_DIR=""
 SKIPCOUNT=5
+SKIP_COV=0
 
 # AFLNet options for MQTT protocol
-OPTIONS="-P MQTT -D 10000 -q 3 -s 3 -E -K -R -m none"
+# Note: -m none and -t 3000+ are already in the run.sh template, do not repeat here.
+OPTIONS="-P MQTT -D 10000 -q 3 -s 3 -E -K -R"
 
 # =====================================================================
 # Parse arguments
@@ -52,6 +54,7 @@ while [[ $# -gt 0 ]]; do
         -n|--num-inst)    NUM_INSTANCES="$2"; shift 2 ;;
         --timeout)        TIMEOUT="$2"; shift 2 ;;
         -o|--output)      OUTPUT_DIR="$2"; shift 2 ;;
+        --skip-cov)       SKIP_COV=1; shift ;;
         -h|--help)        show_help ;;
         *)
             # Legacy positional args: <num_instances> <timeout> <output_dir>
@@ -119,12 +122,13 @@ fi
 CIDS=()
 
 for i in $(seq 1 "$NUM_INSTANCES"); do
-    # ProFuzzBench run.sh takes 5 args (standard format):
-    #   <fuzzer> <outdir> <options> <timeout> <skipcount>
+    # ProFuzzBench run.sh takes 6 args (standard format):
+    #   <fuzzer> <inputs> <outdir> <options> <timeout> <skipcount>
     CID=$(docker run --cpus=1 -d -it \
+        -e SKIP_COV=${SKIP_COV} \
         "$IMAGE" \
         /bin/bash -c "cd /home/ubuntu/experiments && \
-            run aflnet ${OUTDIR_NAME} '${OPTIONS}' ${TIMEOUT} ${SKIPCOUNT}")
+            run aflnet /home/ubuntu/experiments/in-mqtt ${OUTDIR_NAME} '${OPTIONS}' ${TIMEOUT} ${SKIPCOUNT}")
     CID_SHORT="${CID:0:12}"
     CIDS+=("$CID_SHORT")
     echo "[$(date '+%H:%M:%S')] Instance ${i}: container ${CID_SHORT}"
@@ -208,7 +212,23 @@ for cid in "${CIDS[@]}"; do
         fi
         cd - > /dev/null
     else
-        echo "    WARNING: tar.gz not found"
+        # Fallback: tar.gz not produced (e.g. container killed before tar step).
+        # Directly copy the fuzzing output directory from the container filesystem.
+        echo "    WARNING: tar.gz not found, falling back to direct docker cp"
+        docker cp "${cid}:/home/ubuntu/experiments/mosquitto/src/${OUTDIR_NAME}" \
+            "${INSTANCE_DIR}/" 2>/dev/null || \
+        docker cp "${cid}:/home/ubuntu/experiments/${OUTDIR_NAME}" \
+            "${INSTANCE_DIR}/" 2>/dev/null || true
+        if [ -d "${INSTANCE_DIR}/${OUTDIR_NAME}" ]; then
+            echo "    Fallback copy OK: ${OUTDIR_NAME}/"
+            if [ -f "${INSTANCE_DIR}/${OUTDIR_NAME}/cov_over_time.csv" ]; then
+                cp "${INSTANCE_DIR}/${OUTDIR_NAME}/cov_over_time.csv" \
+                   "${INSTANCE_DIR}/cov_over_time.csv"
+                echo "    cov_over_time.csv recovered"
+            fi
+        else
+            echo "    ERROR: fallback copy also failed for ${cid}"
+        fi
     fi
 
     # Count replayable-queue entries

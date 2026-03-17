@@ -25,6 +25,12 @@
 #   ./gmpfuzz_exec.sh -a no-pasd 2                    # Ablation: no PASD
 #   ./gmpfuzz_exec.sh -a no-ase 3                     # Ablation: no ASE
 #   ./gmpfuzz_exec.sh -t mongoose -a baseline 4       # mongoose, pure AFLNet
+#   ./gmpfuzz_exec.sh -a no-llm --ablation-budget 7200 5  # custom 2h budget
+#
+# Ablation budget:
+#   Non-full modes automatically load preset/<target>/config_ablation.yaml
+#   which sets T_budget=21600 (6h), T_min=900, T_max=2400, max_gen=10.
+#   Override with --ablation-budget SEC to use a different value.
 #
 # Output is stored in: evaluation/gmpfuzz_<target>_<test_number>/
 
@@ -38,6 +44,7 @@ cd "$SCRIPT_DIR"
 # =====================================================================
 NUM_GENS=20
 ABLATION_MODE="full"
+ABLATION_BUDGET=""   # empty = use config_ablation.yaml default
 
 TARGET="mqtt"
 
@@ -71,6 +78,8 @@ while [[ $# -gt 0 ]]; do
             NUM_GENS="$2"; shift 2 ;;
         -a|--ablation)
             ABLATION_MODE="$2"; shift 2 ;;
+        --ablation-budget)
+            ABLATION_BUDGET="$2"; shift 2 ;;
         -h|--help)
             show_usage ;;
         -*)
@@ -147,6 +156,40 @@ RUNDIR="preset/${TARGET}"
 PROJECT_NAME="${TARGET}"
 IMAGE_NAME="gmpfuzz/${TARGET}"
 CURRENT_DATE=$(date +%Y%m%d_%H%M%S)
+
+# =====================================================================
+# Ablation mode: load shortened budget config
+# =====================================================================
+# Non-full modes use config_ablation.yaml (T_budget=21600s / 6h).
+# elmconfig.py loads ELMFUZZ_CONFIG on top of config.yaml (deep-merge,
+# so only the overridden keys change; everything else stays from config.yaml).
+if [ "$ABLATION_MODE" != "full" ]; then
+    ABLATION_CONFIG="${SCRIPT_DIR}/preset/${TARGET}/config_ablation.yaml"
+    if [ -f "$ABLATION_CONFIG" ]; then
+        export ELMFUZZ_CONFIG="$ABLATION_CONFIG"
+        # Optionally override T_budget from command line
+        if [ -n "$ABLATION_BUDGET" ]; then
+            _TMP_CFG=$(mktemp /tmp/gmpfuzz_ablation_XXXXXX.yaml)
+            # Write a minimal one-key override on top of config_ablation.yaml
+            printf 'ase:\n  T_budget: %d\n' "$ABLATION_BUDGET" > "$_TMP_CFG"
+            export ELMFUZZ_CONFIG="$_TMP_CFG"
+            # elmconfig.py merges: config.yaml → config_ablation.yaml → _TMP_CFG
+            # But it only reads one ELMFUZZ_CONFIG. Chain via a combined temp file.
+            python3 - <<EOF
+import yaml, os
+with open('${ABLATION_CONFIG}') as f:
+    cfg = yaml.safe_load(f) or {}
+cfg.setdefault('ase', {})['T_budget'] = ${ABLATION_BUDGET}
+with open('${_TMP_CFG}', 'w') as f:
+    yaml.dump(cfg, f)
+EOF
+        fi
+        echo "[Ablation] Budget config: ${ELMFUZZ_CONFIG}"
+        echo "[Ablation] Effective T_budget: $(python3 elmconfig.py get ase.T_budget 2>/dev/null || echo '?')s"
+    else
+        echo "[Ablation] WARNING: config_ablation.yaml not found at ${ABLATION_CONFIG}, using full config."
+    fi
+fi
 
 # =====================================================================
 # Setup directories

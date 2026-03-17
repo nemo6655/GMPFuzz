@@ -30,10 +30,15 @@ extract_edge_csv() {
     local FUZZER=$1 DIR=$2 IDX=$3
     local CSV=$(find "$DIR" -maxdepth 1 -name "edge_coverage.csv" 2>/dev/null | head -1)
     if [ -n "$CSV" ] && [ -f "$CSV" ]; then
-        local N=$(wc -l < "$CSV")
+        # data_points = number of data rows (excluding header)
+        local N=$(( $(wc -l < "$CSV") - 1 ))
         local FINAL=$(tail -1 "$CSV" | cut -d',' -f2 | tr -d ' ')
-        echo "${FUZZER},${IDX},${FINAL:-0},${N}" >> "$SUMMARY_CSV"
-        echo "    Edges: ${FINAL:-0} (${N} data points)"
+        # Guard: if FINAL is not a number (e.g. header "edge_count" when file is empty), treat as 0
+        if ! [[ "$FINAL" =~ ^[0-9]+$ ]]; then
+            FINAL=0
+        fi
+        echo "${FUZZER},${IDX},${FINAL},${N}" >> "$SUMMARY_CSV"
+        echo "    Edges: ${FINAL} (${N} data points)"
     else
         echo "    WARNING: edge_coverage.csv not found"
         echo "${FUZZER},${IDX},0,0" >> "$SUMMARY_CSV"

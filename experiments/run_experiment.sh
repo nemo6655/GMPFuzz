@@ -15,8 +15,7 @@
 #
 # Coverage:
 #   AFLNet & GMPFuzz: gcov line/branch coverage (via cov_script inside container)
-#   MPFuzz & Peach:   gcov line/branch coverage (via tcpdump pcap replay post-fuzzing)
-#                     + edge count as secondary metric
+#   MPFuzz & Peach:   edge coverage only (via shared-memory bitmap + cov_collect.py)
 #
 # Usage:
 #   ./run_experiment.sh [options]
@@ -54,6 +53,7 @@ OUTPUT_DIR=""
 SKIP_FUZZERS=()
 ONLY_FUZZER=""
 NO_PLOT=0
+SKIP_COV=0
 DRY_RUN=0
 
 show_help() {
@@ -70,6 +70,7 @@ while [[ $# -gt 0 ]]; do
         -s|--skip)       SKIP_FUZZERS+=("$2"); shift 2 ;;
         --only)          ONLY_FUZZER="$2"; shift 2 ;;
         --no-plot)       NO_PLOT=1; shift ;;
+        --skip-cov)      SKIP_COV=1; shift ;;
         --dry-run)       DRY_RUN=1; shift ;;
         -h|--help)       show_help ;;
         *)               echo "Unknown option: $1"; show_help ;;
@@ -273,6 +274,7 @@ launch_fuzzer() {
             bash "${SCRIPT_DIR}/run_aflnet.sh" \
                 -t "$TARGET" -n "$NUM_INSTANCES" --timeout "$TIMEOUT" \
                 -o "${OUTPUT_DIR}/aflnet" \
+                $( [ "$SKIP_COV" = "1" ] && echo "--skip-cov" ) \
                 > "$log" 2>&1 &
             ;;
         mpfuzz)

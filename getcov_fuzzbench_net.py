@@ -26,6 +26,41 @@ import json
 logger = logging.getLogger(__file__)
 
 
+def graceful_stop_container(cid, grace=120):
+    """
+    Gracefully stop a Docker container so the run.sh cleanup (tar czf) can finish.
+
+    Strategy:
+      1. Send SIGTERM directly to afl-fuzz inside the container via `docker exec pkill`.
+         This lets afl-fuzz save its state and exit normally, after which run.sh will
+         execute `tar czf` to package the output.
+      2. Wait up to `grace` seconds for the container to exit on its own.
+      3. If it is still running after `grace` seconds, fall back to `docker kill` (SIGKILL).
+
+    Background: `docker kill` sends SIGKILL to PID 1 (bash -c), which immediately
+    terminates the entire container without giving run.sh a chance to create the tarball.
+    Sending SIGTERM to afl-fuzz directly avoids this problem.
+    """
+    # Step 1: ask afl-fuzz to stop gracefully
+    subprocess.run(
+        ['docker', 'exec', cid, 'pkill', '-TERM', '-f', 'afl-fuzz'],
+        capture_output=True, timeout=10
+    )
+    # Step 2: wait for the container to finish (tar czf + exit)
+    deadline = time.time() + grace
+    while time.time() < deadline:
+        res = subprocess.run(
+            ['docker', 'inspect', '-f', '{{.State.Running}}', cid],
+            capture_output=True, text=True
+        )
+        if res.returncode != 0 or res.stdout.strip() != 'true':
+            return  # container has exited, tarball should be complete
+        time.sleep(3)
+    # Step 3: fallback – container is still alive, force kill
+    print(f"[graceful_stop] Container {cid[:12]} did not exit within {grace}s, force-killing")
+    subprocess.run(['docker', 'kill', cid], capture_output=True, timeout=10)
+
+
 @click.command()
 @click.option('--image', type=str, required=True, help='Docker image name (e.g., gmpfuzz/mqtt)')
 @click.option('--input', type=str, required=True, help='Input directory containing seed subdirectories')
@@ -123,6 +158,7 @@ def main(image: str, input: str, output: str, persist: bool, covfile: str,
             cmd = [
                 'docker', 'run', '-d',
                 '--cpus=1',
+                '-e', 'SKIP_COV=1',   # skip gcov/cov_script so tar czf runs immediately on stop
                 '-v', f'{run_tmp}:/tmp',
                 image,
                 '/bin/bash', '-c',
@@ -215,8 +251,7 @@ def main(image: str, input: str, output: str, persist: bool, covfile: str,
                         if action == "stop":
                             print(f"[ASE] Early stopping at t={t_elapsed:.0f}s (saturated)")
                             for cid in still_running:
-                                subprocess.run(['docker', 'kill', cid],
-                                               capture_output=True, timeout=10)
+                                graceful_stop_container(cid, grace=120)
                             break
                         elif action == "extend":
                             new_limit = ase_scheduler.get_current_epoch_limit()
@@ -226,8 +261,7 @@ def main(image: str, input: str, output: str, persist: bool, covfile: str,
                     if t_elapsed >= ase_scheduler.cfg.T_max:
                         print(f"[ASE] Hard limit T_max={ase_scheduler.cfg.T_max}s reached")
                         for cid in still_running:
-                            subprocess.run(['docker', 'kill', cid],
-                                           capture_output=True, timeout=10)
+                            graceful_stop_container(cid, grace=120)
                         break
 
                 # Record ASE history
@@ -243,22 +277,43 @@ def main(image: str, input: str, output: str, persist: bool, covfile: str,
                     start_cov=start_cov_total,
                     end_cov=end_cov_total,
                     actual_time=actual_time,
-                    wall_clock_total=wall_clock_total,
+                    wall_clock_total=actual_time,  # budget counts aflnet time only
                 )
                 ase_scheduler.save(ase_state)
                 print(f"[ASE] Epoch complete: {actual_time:.0f}s, "
                       f"cov {start_cov_total:.0f} -> {end_cov_total:.0f}")
                 print(f"[ASE] {ase_scheduler.get_summary()}")
 
-                # Wait for any remaining containers
-                time.sleep(2)
+                # Wait for any remaining containers to fully exit before docker cp.
+                # graceful_stop_container() already waited for stopped containers;
+                # docker wait here catches containers that exited naturally (no stop needed).
                 for cid in cids:
                     subprocess.run(['docker', 'wait', cid],
-                                   capture_output=True, timeout=30)
+                                   capture_output=True, timeout=180)
             else:
-                # No ASE: simple wait
-                print(f"Waiting for {len(cids)} containers to finish...")
-                subprocess.run(['docker', 'wait'] + cids, check=True)
+                # No ASE: wait for all containers to finish naturally.
+                # Each container uses `timeout $epoch_timeout afl-fuzz` in run.sh,
+                # so it will exit on its own. We poll with a generous ceiling so
+                # we never block forever if a container hangs.
+                print(f"Waiting for {len(cids)} containers to finish (no-ase mode)...")
+                deadline = time.time() + epoch_timeout + 300  # fuzz time + 5min buffer
+                while True:
+                    still_running = [
+                        cid for cid in cids
+                        if subprocess.run(
+                            ['docker', 'inspect', '-f', '{{.State.Running}}', cid],
+                            capture_output=True, text=True
+                        ).stdout.strip() == 'true'
+                    ]
+                    if not still_running:
+                        print("All containers finished.")
+                        break
+                    if time.time() > deadline:
+                        print(f"[no-ase] Timeout reached, stopping {len(still_running)} remaining containers")
+                        for cid in still_running:
+                            graceful_stop_container(cid, grace=120)
+                        break
+                    time.sleep(10)
 
         all_cov_data = {str(next_gen): {}}
 
