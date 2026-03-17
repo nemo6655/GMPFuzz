@@ -1,0 +1,109 @@
+\subsection{Experimental Design}
+\label{subsec:exp-design}
+
+\subsubsection{Test Targets}
+\label{subsubsec:targets}
+
+We evaluate GMPFuzz on three widely-deployed open-source MQTT brokers that
+differ in implementation language, architecture, and target deployment
+scenario.  Selecting multiple brokers avoids evaluation bias toward a single
+codebase and demonstrates the protocol-level generality of our approach.
+
+\begin{table}[htbp]
+  \centering
+  \caption{MQTT Broker Test Targets}
+  \label{tab:targets}
+  \renewcommand{\arraystretch}{1.25}
+  \begin{tabular}{llllp{4.2cm}}
+    \toprule
+    \textbf{Target} & \textbf{Version} & \textbf{Language} & \textbf{License} &
+    \textbf{Characteristics} \\
+    \midrule
+    Mosquitto~\cite{mosquitto}
+      & v1.5.5
+      & C
+      & EPL-2.0
+      & Lightweight reference broker; widely used in IoT devices and embedded
+        systems; extensive state-machine for QoS 1/2 and retained messages. \\
+    \addlinespace
+    Mongoose~\cite{mongoose}
+      & v7.20
+      & C
+      & GPLv2 / commercial
+      & Event-driven single-thread network library with an embedded MQTT broker;
+        compact code base suited for resource-constrained environments. \\
+    \addlinespace
+    NanoMQ~\cite{nanomq}
+      & v0.21.10
+      & C
+      & MIT
+      & High-performance multi-threaded broker targeting edge computing;
+        implements MQTT 3.1.1 with NNG-based asynchronous I/O. \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+All three brokers implement MQTT 3.1.1~\cite{mqtt311spec} and are compiled
+with AFL-Clang-Fast instrumentation (edge-coverage feedback) and AddressSanitizer
+(\texttt{AFL\_USE\_ASAN=1}) to amplify crash detection.  A separate
+coverage-only build (GCC with \texttt{-fprofile-arcs -ftest-coverage -O0}) is
+maintained for post-run branch-coverage measurement via \texttt{gcovr}.
+
+\subsubsection{Baselines and Benchmarks}
+\label{subsubsec:baselines}
+
+We compare GMPFuzz against three representative protocol fuzzers that serve as
+natural baselines for MQTT fuzzing.
+\textbf{AFLNet}~\cite{aflnet} is a greybox network fuzzer that extends AFL
+with a response-guided state machine.  It is the most widely adopted
+protocol fuzzer and the direct foundation of GMPFuzz's fuzzing engine;
+we run four independent AFLNet instances per target to match GMPFuzz's
+internal parallelism of four state pools.
+\textbf{MPFuzz}~\cite{mpfuzz} is a multi-client MQTT fuzzer that
+coordinates publish/subscribe client pairs to trigger cross-client protocol
+bugs; it executes four internal agents concurrently, providing a
+competitive parallel baseline.
+\textbf{Peach}~\cite{peach} is a generation-based fuzzer driven by
+hand-crafted MQTT pit files, representing the class of specification-guided
+fuzzers that do not leverage runtime feedback; we run four independent
+instances to match the parallelism of the other tools.
+
+All tools are containerised via Docker and executed under identical
+network and process conditions.  Fuzzer binaries for AFLNet are taken from the
+ProFuzzBench~\cite{profuzzbench} framework to ensure reproducibility; MPFuzz
+and Peach use the images provided in the respective benchmark sub-directories
+of our artefact.
+
+\subsubsection{Hardware and Software Environment}
+\label{subsubsec:env}
+
+All experiments are conducted on a single workstation with the following
+configuration.
+
+\paragraph{Hardware.}
+The host machine is equipped with an Intel Xeon W-3400 series processor
+(24 physical cores), 128\,GB of DDR5 ECC memory, and an NVMe SSD
+(sequential read $>$\,3\,GB/s).  All fuzzing traffic is confined to the
+loopback interface; no external network connectivity is used during
+experiments.
+
+\paragraph{Software.}
+The host runs Ubuntu 20.04.6 LTS (kernel 5.15).  Each fuzzer instance
+executes inside an isolated Docker 24.0 container that shares the host
+network namespace to minimise TCP round-trip latency.  Instrumented target
+binaries are compiled with LLVM/Clang~12 (	exttt{afl-clang-fast}),
+while coverage builds use GCC~9.4 with 	exttt{-fprofile-arcs
+-ftest-coverage}.  LLM inference is provided by CodeLlama-13b-hf
+deployed via vLLM~\cite{vllm} on a dedicated GPU node (NVIDIA A100
+40\,GB), keeping LLM latency off the fuzzing host's CPU budget.
+The GMPFuzz orchestrator and all analysis scripts run under Python~3.10.
+
+\paragraph{Experimental parameters.}
+The full-mode GMPFuzz run uses a fuzz-only time budget of $T_{\text{budget}} =
+86{,}400$\,s (24\,h) per target, with per-epoch bounds $T_{\min} = 1{,}800$\,s
+and $T_{\max} = 7{,}200$\,s.  Four state pools run in parallel, each driving
+an independent AFL-Net container.  The LLM variant-generation phase
+($T_{\text{LLM}} \approx 2{,}400$\,s per generation) is excluded from the
+fuzz budget and runs sequentially between epochs.  All competing tools run for
+the same wall-clock budget of 86,400\,s.  Each configuration is repeated once;
+we report edge-coverage curves and final edge counts as primary metrics.
