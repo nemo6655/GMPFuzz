@@ -1,0 +1,22 @@
+# Ablation experiment override config for FlashMQ target
+# Merged on top of config.yaml (higher priority).
+# Purpose: shorter budget so 7 ablation modes x 3 targets finish in ~2 days.
+#
+# Wall-clock estimate per ablation run:
+#   T_budget = 21600s (6h fuzz-only)
+#   + LLM overhead ~40min/gen x ~6 gens ≈ 4h
+#   Total: ~10h/run  → 7 modes x 3 targets = 21 runs
+#   Sequential: ~9 days | Parallel (3 at a time): ~3 days
+#
+# ASE will allocate epochs between T_min (900s) and T_max (2400s).
+# With T_budget=21600 and T_max=2400 → ~9 epochs max before budget exhausts.
+
+run:
+  max_generations: 10     # Cap at 10 gens (budget will exhaust before this)
+
+ase:
+  T_min: 900              # 15 min floor (shorter, ablation just needs trend)
+  T_max: 2400             # 40 min cap per epoch
+  T_default: 1800         # 30 min default first epoch
+  T_budget: 21600         # 6 hour fuzz-only budget
+  T_llm_estimate: 2400    # LLM estimate unchanged (40 min)

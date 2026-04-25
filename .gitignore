@@ -8,9 +8,9 @@ build/
 .eggs/
 
 # Virtual environments
-venv/
+.venv/
 .env/
-
+crash
 # IDE
 .vscode/
 .idea/

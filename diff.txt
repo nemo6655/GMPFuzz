@@ -1,0 +1,19 @@
+diff --git a/all_gen_net.sh b/all_gen_net.sh
+index 27fd5e0..c2701fe 100755
+--- a/all_gen_net.sh
++++ b/all_gen_net.sh
+@@ -68,8 +68,13 @@ if [ -d "$genout_dir" ]; then
+     fi
+ fi
+ 
+-# Clean up existing gen*, initial, stamps directories if starting fresh
++# Clean up existing gen*, initial, stamps directories AND ase_state if starting fresh
+ if [ $start_gen -eq -1 ]; then
++    # Clean ASE state to avoid stale budget/history from previous runs
++    if [ "$should_clean" == "True" ] && [ -f "${ELMFUZZ_RUNDIR}/ase_state.json" ]; then
++        echo "Removing stale ASE state: ${ELMFUZZ_RUNDIR}/ase_state.json"
++        rm -f "${ELMFUZZ_RUNDIR}/ase_state.json"
++    fi
+     for pat in "gen*" "initial" "stamps"; do
+         if compgen -G "$ELMFUZZ_RUNDIR"/$pat > /dev/null; then
+             if [ "$should_clean" == "True" ]; then

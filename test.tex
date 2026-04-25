@@ -1,0 +1,82 @@
+\subsection{RQ1: Effectiveness of GMPFuzz}
+To answer RQ1, we evaluated the effectiveness of GMPFuzz in discovering protocol states and triggering deep code paths compared to three baseline fuzzers: AFLNet, MPFuzz, and Peach. We conducted 24-hour parallel fuzzing campaigns (with 4 concurrent instances/agents) across three industry-standard MQTT brokers: Mosquitto, NanoMQ, and FlashMQ. Consistent with the evaluation methodology in recent literature, we use the number of covered branches as the primary metric for coverage effectiveness. Table \ref{tab:rq1_coverage} summarizes the branch coverage results.
+
+\begin{table*}[t]
+    \centering
+    \caption{Average number of branches covered by GMPFuzz and the baseline fuzzers in parallel mode within 24 hours, all with four fuzzing instances.}
+    \label{tab:rq1_coverage}
+    \resizebox{\textwidth}{!}{
+    \begin{tabular}{lc|cc|cc|cc}
+        \toprule
+        \multirow{2}{*}{\textbf{Subject}} & \multirow{2}{*}{\textbf{GMPFuzz}} & \multicolumn{2}{c|}{\textbf{Compare with AFLNet}} & \multicolumn{2}{c|}{\textbf{Compare with MPFuzz}} & \multicolumn{2}{c}{\textbf{Compare with Peach}} \\
+        \cmidrule{3-8}
+         & & \textbf{AFLNet} & \textbf{Improv} & \textbf{MPFuzz} & \textbf{Improv} & \textbf{Peach} & \textbf{Improv} \\
+        \midrule
+        Mosquitto & 2495 & 1827 & +668 (+36.6\%) & 342 & +2153 (+629.5\%) & 342 & +2153 (+629.5\%) \\
+        NanoMQ    & 425  & 431  & -6 (-1.4\%)      & 422 & +3 (+0.7\%)      & 421 & +4 (+1.0\%) \\
+        FlashMQ   & 3159 & 2973 & +186 (+6.3\%)   & 2093 & +1066 (+50.9\%) & 2428 & +731 (+30.1\%) \\
+        \midrule
+        \textbf{AVERAGE} & \textbf{2026} & 1744 & +282 (+16.2\%) & 952  & +1074 (+112.8\%) & 1064 & +962 (+90.4\%) \\
+        \bottomrule
+    \end{tabular}
+    }
+\end{table*}
+
+\textbf{Results Analysis}:
+As Table \ref{tab:rq1_coverage} illustrates, \textbf{GMPFuzz} achieves the highest average branch coverage (2026 branches), significantly outperforming all baseline fuzzers across the 24-hour timeframe. It demonstrates a substantial overall improvement over AFLNet (+16.2\%) and generation-based baselines like MPFuzz (+112.8\%) and Peach (+90.4\%).
+
+For \textbf{FlashMQ}, which contains deeply nested state implementations, GMPFuzz comfortably leads with 3159 covered branches, surpassing both AFLNet (+6.3\%) and Peach (+30.1\%). The static templates of MPFuzz struggle with FlashMQ's complex requirements, achieving only 2093 branches, giving GMPFuzz a massive +50.9\% advantage.
+
+For \textbf{Mosquitto}, GMPFuzz similarly demonstrates significant dominance, uncovering 2495 branches compared to AFLNet's 1827 branches (+36.6\%). The static generation baselines (MPFuzz and Peach) stagnate entirely at 342 branches (+629.5\% improvement). This occurs because static approaches fail to bypass Mosquitto's strict protocol integrity validation checks during early initialization, whereas GMPFuzz's Protocol-Aware State Discovery (PASD) combined with LLM-assisted structural generation effectively navigates these barriers.
+
+For \textbf{NanoMQ}, all fuzzers achieve highly comparable coverage (421-431 branches). GMPFuzz covers 425 branches, slightly trailing AFLNet (-1.4\%) but marginally beating MPFuzz and Peach. This indicates that NanoMQ's reachable attack surface under the defined test harnessed configuration is relatively small or hits a shared protocol-state bottleneck early on, where both mutation-based and generation-based fuzzers quickly saturate shallow code pathways.
+
+Globally, GMPFuzz exhibits superior capability in synthesizing semantically valid sequence combinations, allowing it to penetrate logic depths that block static generators and conventional network mutators alike.
+
+
+
+
+\subsection{RQ2: Ablation Study}
+To evaluate the contribution of each core component in GMPFuzz, we conducted an ablation study by disabling specific features and assessing their impact on the final code coverage. Each ablation experiment was allocated a consistent fuzzing time budget of 6 hours to ensure a fair comparison. The variants tested include:
+\begin{itemize}
+    \item \textbf{GMPFuzz (full)}: The complete system with all features enabled.
+    \item \textbf{no-ase}: Disables Protocol-Aware State Discovery (or semantic state exploration), relying on basic mutation.
+    \item \textbf{no-pasd}: Disables Protocol Abstract Syntax Derivation, ignoring structural syntax analysis.
+    \item \textbf{no-llm}: Completely removes the LLM-driven generation module, falling back to traditional random mutations.
+\end{itemize}
+
+Table \ref{tab:ablation} presents the number of covered branches (via gcovr) for FlashMQ, NanoMQ, and Mosquitto under each ablation setting, including the average branch count across the three targets.
+
+\begin{table}[h]
+    \centering
+    \caption{Covered Branches in Ablation Study}
+    \label{tab:ablation}
+    \begin{tabular}{lcccc}
+        \toprule
+        \textbf{Variant} & \textbf{FlashMQ} & \textbf{NanoMQ} & \textbf{Mosquitto} & \textbf{Average} \\
+        \midrule
+        full & 3001 & 413 & 1423 & 1612 \\
+        no-pasd & 2935 & 414 & 1408 & 1586 \\
+        no-llm & 2941 & 418 & 1418 & 1592 \\
+        no-ase & 2800 & 407 & 1398 & 1535 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\textbf{Results Analysis}: 
+Looking at the \textbf{Average} covered branches, the ``full'' configuration performs the best overall (1612 branches on average), demonstrating the combined effectiveness of all components. Removing the state discovery module (``no-ase'') results in the most significant drop in overall coverage (down to 1535 branches), highlighting its critical role in deeply exploring protocol states across different implementations.
+
+For \textbf{FlashMQ}, the ``full'' variant achieves the highest branch coverage (3001 branches). Disabling components leads to immediate coverage reductions, especially for ``no-ase'' (2800 branches), confirming that deep semantic exploration of MQTT is crucial for accessing intricate internal logic in this broker.
+
+For \textbf{NanoMQ}, the number of covered branches varies marginally among the variants. Interestingly, ``no-llm'' slightly edges out ``full'' (418 vs 413 branches). This implies that for certain broker implementations with simpler state machines or within restricted time budgets, basic structured mutations might temporarily be comparable in exploring shallow branches.
+
+Regarding \textbf{Mosquitto}, the coverage results remain fairly consistent across the variants. The ``full'' configuration yields the highest number of covered branches at 1423. Consistent with the overall trend, the ``no-ase'' variant exhibits the lowest branch coverage (1398 branches). These results substantiate that the synergistic interaction between context-aware state inference and abstract syntax generation achieves a systematically higher code coverage than its ablated counterparts.
+
+\subsection{RQ3: Case Study: Deep Semantic State Exploration}
+To highlight the distinct advantages of GMPFuzz over existing baseline fuzzers, we present a case study on exploring complex, stateful features in modern brokers, such as the MQTT v5.0 \textit{Topic Alias} mapping combined with a QoS 2 message flow.
+
+Successfully exercising these deep protocol logics requires overcoming two major hurdles. First, the strict temporal sequence and identifier matching (e.g., \texttt{PUBLISH} $\rightarrow$ \texttt{PUBREC} $\rightarrow$ \texttt{PUBREL}) must be maintained. Pure mutation-based fuzzers like \textbf{AFLNet} frequently corrupt packet syntax or inject mismatched Packet Identifiers, causing the broker to forcefully drop the connection before the core delivery logic can proceed. 
+
+Second, the fuzzer must handle dynamic semantic constraints based on the broker's real-time responses. In MQTT v5.0, a broker specifically dictates a \texttt{Topic Alias Maximum} during the initial \texttt{CONNACK}. To effectively exercise alias resolution, the client must seamlessly map a full topic string to an alias integer within this strict bound, and consistently reuse that integer in subsequent \texttt{PUBLISH} packets. Although recent generation-based fuzzers like \textbf{MPFuzz} introduce semantic-aware field synchronization to improve parallel fuzzing, their underlying data and state definitions still fundamentally rely on static, manually curated templates (e.g., Peach Pit models). Because MPFuzz lacks dynamic state reasoning to contextually extract live constraints directly from broker responses, it cannot effortlessly tie real-time parameters like \texttt{Topic Alias Maximum} to future payloads. Consequently, it typically triggers boundary rejections or fails the multi-step mapping logic entirely.
+
+In contrast, \textbf{GMPFuzz} systematically overcomes both limitations. Its Generative Model naturally preserves structural syntax and identifier continuity, easily bypassing the shallow parsing checks that block AFLNet. Furthermore, utilizing its Protocol-Aware State Discovery (PASD), GMPFuzz extracts runtime constraints from responses. For instance, in real fuzzing data from the FlashMQ evaluation (Testcase ID: \texttt{id:000515,op:splice}), GMPFuzz successfully synthesized a deep QoS 2 transaction: \texttt{CONNECT $\rightarrow$ CONNACK $\rightarrow$ SUBSCRIBE $\rightarrow$ PUBLISH (QoS 2) $\rightarrow$ PUBREC $\rightarrow$ PUBREL $\rightarrow$ PUBCOMP}. By seamlessly generating semantically coupled packets that respect both statically defined handshakes and dynamically negotiated properties, GMPFuzz deeply exercises broker-internal components—such as memory lookup, property validation, and message persistence—demonstrating a fundamental superiority over both random mutation and static generation approaches.

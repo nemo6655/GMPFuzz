@@ -1,0 +1,44 @@
+{
+  "config": {
+    "T_min": 1800,
+    "T_max": 36000,
+    "T_default": 3600,
+    "T_budget": 86400,
+    "tau_stall": 300,
+    "delta": 30,
+    "alpha": 0.2,
+    "beta": 0.02,
+    "gamma": 0.15,
+    "T_llm_estimate": 2400,
+    "min_fuzzing_ratio": 0.5,
+    "T_increment": 3600
+  },
+  "history": [
+    {
+      "gen": 0,
+      "predicted_epoch": 4500,
+      "delta_cov": 296.0,
+      "actual_time": 3621.053291320801,
+      "start_cov": 39.0,
+      "end_cov": 335.0,
+      "was_early_stopped": true,
+      "was_extended": true,
+      "extend_count": 3,
+      "wall_clock_total": 3621.053291320801
+    },
+    {
+      "gen": 1,
+      "predicted_epoch": 9777,
+      "delta_cov": 1793.0,
+      "actual_time": 8294.089950561523,
+      "start_cov": 130.0,
+      "end_cov": 1923.0,
+      "was_early_stopped": true,
+      "was_extended": true,
+      "extend_count": 5,
+      "wall_clock_total": 8294.089950561523
+    }
+  ],
+  "total_elapsed": 11915.143241882324,
+  "total_fuzz_time": 11915.143241882324
+}

@@ -1,0 +1,217 @@
+     1	#!/bin/bash
+     2	# all_gen_net.sh - Main orchestration script for GMPFuzz.
+     3	#
+     4	# Usage: ./all_gen_net.sh <rundir> [start_gen]
+     5	#
+     6	# This script:
+     7	# 1. Reads config from <rundir>/config.yaml
+     8	# 2. Builds the Docker image (gmpfuzz/mqtt)
+     9	# 3. Creates initial seeds from raw files using seed_gen_mqtt.py
+    10	# 4. Runs do_gen_net.sh for each generation (initial -> gen0 -> gen1 -> ...)
+    11	# 5. Runs do_gen_net_finial.sh for the last generation
+    12	#
+    13	# Each generation:
+    14	#   - Selects best seeds (lattice/elite/best_of_gen)
+    15	#   - Generates variants via LLM
+    16	#   - Runs aflnet in parallel Docker containers
+    17	#   - Collects coverage
+    18	
+    19	set -euo pipefail
+    20	
+    21	if [ "$#" -eq 1 ]; then
+    22	    start_gen=-1
+    23	elif [ "$#" -eq 2 ]; then
+    24	    start_gen=$2
+    25	else
+    26	    echo "Usage: $0 rundir [start_gen]"
+    27	    exit 1
+    28	fi
+    29	
+    30	# ELMFUZZ_RUNDIR is used by elmconfig.py to find config.yaml
+    31	export ELMFUZZ_RUNDIR="$1"
+    32	export ELMFUZZ_RUN_NAME=$(basename "$ELMFUZZ_RUNDIR")
+    33	
+    34	seeds=$(./elmconfig.py get run.seeds)
+    35	if [ -n "${NUM_GENERATIONS:-}" ]; then
+    36	    max_gens=${NUM_GENERATIONS}
+    37	else
+    38	    max_gens=$(./elmconfig.py get run.max_generations 2>/dev/null || ./elmconfig.py get run.num_generations 2>/dev/null || echo 20)
+    39	fi
+    40	
+    41	# ASE-driven dynamic generation count
+    42	# max_gens is now a HARD UPPER LIMIT, not the target count.
+    43	# The actual number of generations is decided by ASE's should_continue().
+    44	GMPFUZZ_ASE="${GMPFUZZ_ASE:-1}"
+    45	ASE_STATE_FILE="${ELMFUZZ_RUNDIR}/ase_state.json"
+    46	
+    47	# For backward compat: last_gen is used in cleanup logic below
+    48	last_gen=$((max_gens - 1))
+    49	
+    50	genout_dir=$(./elmconfig.py get run.genoutput_dir -s GEN=. -s MODEL=.)
+    51	export ENDPOINTS=$(./elmconfig.py get model.endpoints)
+    52	export TYPE=$(./elmconfig.py get type)
+    53	export PROJECT_NAME=$(./elmconfig.py get project_name)
+    54	
+    55	# Normalize the path
+    56	genout_dir=$(realpath -m "$genout_dir")
+    57	
+    58	# Check if we should remove the output dirs if they exist
+    59	should_clean=$(./elmconfig.py get run.clean)
+    60	if [ -d "$genout_dir" ]; then
+    61	    if [ "$should_clean" == "True" ]; then
+    62	        echo "Removing generated outputs in $genout_dir"
+    63	        rm -rf "$genout_dir"
+    64	    else
+    65	        echo "Generated output directory $genout_dir already exists; exiting."
+    66	        echo "Set run.clean to True to remove existing rundirs."
+    67	        exit 1
+    68	    fi
+    69	fi
+    70	
+    71	# Clean up existing gen*, initial, stamps directories AND ase_state if starting fresh
+    72	if [ $start_gen -eq -1 ]; then
+    73	    # Clean ASE state to avoid stale budget/history from previous runs
+    74	    if [ "$should_clean" == "True" ] && [ -f "${ELMFUZZ_RUNDIR}/ase_state.json" ]; then
+    75	        echo "Removing stale ASE state: ${ELMFUZZ_RUNDIR}/ase_state.json"
+    76	        rm -f "${ELMFUZZ_RUNDIR}/ase_state.json"
+    77	    fi
+    78	    for pat in "gen*" "initial" "stamps"; do
+    79	        if compgen -G "$ELMFUZZ_RUNDIR"/$pat > /dev/null; then
+    80	            if [ "$should_clean" == "True" ]; then
+    81	                echo "Removing existing rundir(s):" "$ELMFUZZ_RUNDIR"/$pat
+    82	                rm -rf "$ELMFUZZ_RUNDIR"/$pat
+    83	            else
+    84	                echo "Found existing rundir(s):" "$ELMFUZZ_RUNDIR"/$pat
+    85	                echo "Set run.clean to True to remove existing rundirs."
+    86	                exit 1
+    87	            fi
+    88	        fi
+    89	    done
+    90	else
+    91	    for g in $(seq $start_gen $((last_gen+1))); do
+    92	        if [ -d "$ELMFUZZ_RUNDIR/gen$g" ]; then
+    93	            if [ "$should_clean" == "True" ]; then
+    94	                echo "Removing existing rundir(s):" "$ELMFUZZ_RUNDIR/gen$g"
+    95	                rm -rf "$ELMFUZZ_RUNDIR/gen$g"
+    96	            else
+    97	                echo "Found existing rundir(s):" "$ELMFUZZ_RUNDIR/gen$g"
+    98	                echo "Set run.clean to True to remove existing rundirs."
+    99	                exit 1
+   100	            fi
+   101	        fi
+   102	        if [ -f "$ELMFUZZ_RUNDIR/stamps/gen$g.stamp" ]; then
+   103	            if [ "$should_clean" == "True" ]; then
+   104	                rm -rf "$ELMFUZZ_RUNDIR/stamps/gen$g.stamp"
+   105	            fi
+   106	        fi
+   107	    done
+   108	fi
+   109	
+   110	# Reset ASE state when starting fresh (prevents stale budget from previous runs)
+   111	if [ $start_gen -eq -1 ] && [ "$should_clean" == "True" ] && [ -f "$ASE_STATE_FILE" ]; then
+   112	    echo "Removing stale ASE state: $ASE_STATE_FILE"
+   113	    rm -f "$ASE_STATE_FILE"
+   114	fi
+   115	
+   116	# Step 1: Build the Docker image
+   117	if [ "$TYPE" == "profuzzbench" ]; then
+   118	    python prepare_fuzzbench_net.py -t profuzzbench
+   119	elif [ "$TYPE" == "docker" ]; then
+   120	    python prepare_fuzzbench_net.py -t docker
+   121	fi
+   122	
+   123	# Step 2: Run generations (dynamic count driven by ASE budget)
+   124	if [ $start_gen -eq -1 ]; then
+   125	    # Create initial directory structure
+   126	    mkdir -p "$ELMFUZZ_RUNDIR"/initial/{variants,seeds,logs,aflnetout}
+   127	    mkdir -p "$ELMFUZZ_RUNDIR"/stamps
+   128	    mkdir -p "$ELMFUZZ_RUNDIR"/initial/seeds/0000
+   129	    mkdir -p "$ELMFUZZ_RUNDIR"/initial/variants/0000
+   130	
+   131	    # Copy raw seeds to initial/seeds/0000/
+   132	    cp -r $seeds/* "${ELMFUZZ_RUNDIR}/initial/seeds/0000/" 2>/dev/null || true
+   133	
+   134	    # Convert raw seeds to Python generator files
+   135	    PROTOCOL_TYPE=$(./elmconfig.py get protocol_type)
+   136	    python "$ELMFUZZ_RUNDIR"/seed_gen_${PROTOCOL_TYPE}.py \
+   137	        --input_seeds "$ELMFUZZ_RUNDIR"/initial/seeds/0000/ \
+   138	        --init_variants "$ELMFUZZ_RUNDIR"/initial/variants/0000/
+   139	
+   140	    # Run initial -> gen0
+   141	    ./do_gen_net.sh initial gen0
+   142	
+   143	    # Dynamic generation loop: continue as long as ASE says budget remains
+   144	    current_gen=0
+   145	    while true; do
+   146	        next_gen=$((current_gen + 1))
+   147	
+   148	        # Check if ASE says we should continue (budget-aware)
+   149	        if [ "$GMPFUZZ_ASE" != "0" ] && [ -f "$ASE_STATE_FILE" ]; then
+   150	            ASE_RESULT=$(python ase.py should-continue \
+   151	                --current-gen "$current_gen" \
+   152	                --max-gens "$max_gens" \
+   153	                --state-file "$ASE_STATE_FILE" 2>&1) || {
+   154	                echo "[ASE] Budget exhausted or max generations reached."
+   155	                echo "$ASE_RESULT"
+   156	                break
+   157	            }
+   158	            echo "[ASE] $ASE_RESULT"
+   159	        else
+   160	            # No ASE: use fixed max_gens
+   161	            if [ "$current_gen" -ge "$last_gen" ]; then
+   162	                break
+   163	            fi
+   164	        fi
+   165	
+   166	        # Run gen{current} -> gen{next}
+   167	        ./do_gen_net.sh gen${current_gen} gen${next_gen}
+   168	        current_gen=$next_gen
+   169	    done
+   170	
+   171	    # Final generation: collect & merge queue
+   172	    final_gen=$current_gen
+   173	    final_next=$((final_gen + 1))
+   174	    ./do_gen_net_finial.sh gen${final_gen} gen${final_next}
+   175	
+   176	    actual_gens=$final_gen
+   177	else
+   178	    if [ $start_gen -eq 0 ]; then
+   179	        real_start_gen=0
+   180	        ./do_gen_net.sh initial gen0
+   181	    else
+   182	        real_start_gen=$((start_gen-1))
+   183	    fi
+   184	
+   185	    # Dynamic loop from resume point
+   186	    current_gen=$real_start_gen
+   187	    while true; do
+   188	        next_gen=$((current_gen + 1))
+   189	
+   190	        # Check ASE budget
+   191	        if [ "$GMPFUZZ_ASE" != "0" ] && [ -f "$ASE_STATE_FILE" ]; then
+   192	            ASE_RESULT=$(python ase.py should-continue \
+   193	                --current-gen "$current_gen" \
+   194	                --max-gens "$max_gens" \
+   195	                --state-file "$ASE_STATE_FILE" 2>&1) || {
+   196	                echo "[ASE] Budget exhausted or max generations reached."
+   197	                echo "$ASE_RESULT"
+   198	                break
+   199	            }
+   200	            echo "[ASE] $ASE_RESULT"
+   201	        else
+   202	            if [ "$current_gen" -ge "$last_gen" ]; then
+   203	                break
+   204	            fi
+   205	        fi
+   206	
+   207	        ./do_gen_net.sh gen${current_gen} gen${next_gen}
+   208	        current_gen=$next_gen
+   209	    done
+   210	
+   211	    actual_gens=$current_gen
+   212	fi
+   213	
+   214	echo "==============================================="
+   215	echo "GMPFuzz run completed: ${actual_gens} generations (max: ${max_gens})"
+   216	echo "Results in: $ELMFUZZ_RUNDIR"
+   217	echo "==============================================="
