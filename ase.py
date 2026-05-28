@@ -129,11 +129,33 @@ class ASEScheduler:
         self._last_improvement_t: float = 0.0  # Last time coverage improved
 
     @classmethod
-    def load(cls, state_file: str, config: Optional[ASEConfig] = None) -> 'ASEScheduler':
+    
+    def load(cls, state_file: str, config: Optional['ASEConfig'] = None) -> 'ASEScheduler':
         st = ASEState.from_file(state_file)
         cfg = config or ASEConfig()
+        
+        # Pull T_budget from elmconfig dynamically to support ablation overrides seamlessly
+        try:
+            from elmconfig import load_config, mget
+            conf = load_config()
+            dynamic_budget = mget(conf, ['ase', 'T_budget'])
+            if dynamic_budget:
+                cfg.T_budget = int(dynamic_budget)
+            dynamic_min = mget(conf, ['ase', 'T_min'])
+            if dynamic_min:
+                cfg.T_min = int(dynamic_min)
+            dynamic_max = mget(conf, ['ase', 'T_max'])
+            if dynamic_max:
+                cfg.T_max = int(dynamic_max)
+            dynamic_default = mget(conf, ['ase', 'T_default'])
+            if dynamic_default:
+                cfg.T_default = int(dynamic_default)
+        except Exception as e:
+            pass
+
         # Override config from state if present
         if st.config:
+
             for k, v in st.config.items():
                 if hasattr(cfg, k):
                     setattr(cfg, k, type(getattr(cfg, k))(v))
@@ -220,6 +242,15 @@ class ASEScheduler:
         # Final clipping: T_min floor and T_max cap
         # Also ensure we don't exceed remaining budget
         T = int(max(cfg.T_min, min(T, cfg.T_max, T_remain)))
+        
+        # Breakthrough Override: If limit logic clipped us (ex: T_max)
+        # but we have enough budget to beat previous gen's actual time by 1 hr
+        if history:
+            prev_actual_time = history[-1].get('actual_time', 0)
+            if T_remain >= (prev_actual_time + 3600):
+                # Optionally exceed T_max if required, 
+                # but let's just make sure T uses all the budget we need
+                T = int(max(T, min(T_remain, prev_actual_time + 3600)))
 
         # FINAL SAFETY: enforce monotonic increase over previous gen
         # Even after clipping, T must be > prev_max_time (if budget allows)
@@ -231,7 +262,10 @@ class ASEScheduler:
             )
             min_required = prev_max_time + cfg.T_increment
             if T < min_required and T_remain >= min_required:
-                T = int(min(min_required, cfg.T_max, T_remain))
+                # But only cap if we didn't just breakthrough!
+                prev_actual_time = history[-1].get('actual_time', 0)
+                if not (T_remain >= prev_actual_time + 3600):
+                    T = int(min(min_required, cfg.T_max, T_remain))
 
         # Store for monitoring phase
         self._current_T = T
@@ -327,10 +361,19 @@ class ASEScheduler:
                 for h in history
             )
             T_min_gen = prev_max_time + cfg.T_increment + 300
+            
+            # --- BEGIN NEW LOGIC: Breakthrough ---
+            prev_actual_time = history[-1].get('actual_time', 0)
+            can_breakthrough = T_remain >= (prev_actual_time + 3600)
+            
             # Also check: if the required epoch exceeds T_max, we can no
             # longer guarantee monotonic increase, so stop.
             if prev_max_time + cfg.T_increment > cfg.T_max:
-                return False
+                return can_breakthrough
+                
+            if can_breakthrough:
+                return True
+            # --- END NEW LOGIC ---
         else:
             T_min_gen = cfg.T_min + 300  # fuzz floor + overhead
 

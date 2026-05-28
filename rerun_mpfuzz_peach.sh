@@ -14,9 +14,10 @@ BUILD_DIR="${SCRIPT_DIR}/benchmark"
 NUM_PEACH_INSTANCES=4
 
 TASKS=(
-    "mqtt:mpfuzz/mqtt:${SCRIPT_DIR}/evaluation/results_20260402_173153"
-    "nanomq:mpfuzz/nanomq:${SCRIPT_DIR}/evaluation/results_20260416_085721"
-    "flashmq:mpfuzz/flashmq:${SCRIPT_DIR}/evaluation/results_20260417_174913"
+    # "mqtt:mpfuzz/mqtt:${SCRIPT_DIR}/evaluation/results_20260402_173153"
+    "nanomq:mpfuzz/nanomq:${SCRIPT_DIR}/evaluation/results_20260506_174234"
+    # "flashmq:mpfuzz/flashmq:${SCRIPT_DIR}/evaluation/results_20260417_174913"
+    # "mosquitto:gmpfuzz/mosquitto:${SCRIPT_DIR}/evaluation/results_20260425_210002"
 )
 
 for task in "${TASKS[@]}"; do
@@ -205,7 +206,7 @@ INNER_EOF
                 LP=$(echo "$LAST" | cut -d',' -f2)
                 BP=$(echo "$LAST" | cut -d',' -f4)
             fi
-            echo "${FUZZER},${L_IDX},${LP},${BP},${EDGES},${POINTS}" >> "${SUMMARY}.tmp"
+            echo "${FUZZER},${L_IDX},${EDGES},${POINTS},${LP},${BP}" >> "${SUMMARY}.tmp"
         }
 
         add_summary_row "mpfuzz" "1" "${RESULTS_DIR}/mpfuzz/instance_1"

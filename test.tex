@@ -13,10 +13,11 @@ To answer RQ1, we evaluated the effectiveness of GMPFuzz in discovering protocol
          & & \textbf{AFLNet} & \textbf{Improv} & \textbf{MPFuzz} & \textbf{Improv} & \textbf{Peach} & \textbf{Improv} \\
         \midrule
         Mosquitto & 2495 & 1827 & +668 (+36.6\%) & 342 & +2153 (+629.5\%) & 342 & +2153 (+629.5\%) \\
-        NanoMQ    & 425  & 431  & -6 (-1.4\%)      & 422 & +3 (+0.7\%)      & 421 & +4 (+1.0\%) \\
+        NanoMQ    & 3407 & 3350 & +57 (+1.7\%)    & 3121 & +286 (+9.2\%)  & 3099 & +308 (+9.9\%) \\
         FlashMQ   & 3159 & 2973 & +186 (+6.3\%)   & 2093 & +1066 (+50.9\%) & 2428 & +731 (+30.1\%) \\
+        Mongoose  & 864  & 202  & +662 (+327.7\%) & 358 & +506 (+141.3\%) & 358 & +506 (+141.3\%) \\
         \midrule
-        \textbf{AVERAGE} & \textbf{2026} & 1744 & +282 (+16.2\%) & 952  & +1074 (+112.8\%) & 1064 & +962 (+90.4\%) \\
+        \textbf{AVERAGE} & \textbf{2481} & 2088 & +393 (+18.8\%) & 1479 & +1002 (+67.7\%) & 1557 & +924 (+59.3\%) \\
         \bottomrule
     \end{tabular}
     }
@@ -29,7 +30,7 @@ For \textbf{FlashMQ}, which contains deeply nested state implementations, GMPFuz
 
 For \textbf{Mosquitto}, GMPFuzz similarly demonstrates significant dominance, uncovering 2495 branches compared to AFLNet's 1827 branches (+36.6\%). The static generation baselines (MPFuzz and Peach) stagnate entirely at 342 branches (+629.5\% improvement). This occurs because static approaches fail to bypass Mosquitto's strict protocol integrity validation checks during early initialization, whereas GMPFuzz's Protocol-Aware State Discovery (PASD) combined with LLM-assisted structural generation effectively navigates these barriers.
 
-For \textbf{NanoMQ}, all fuzzers achieve highly comparable coverage (421-431 branches). GMPFuzz covers 425 branches, slightly trailing AFLNet (-1.4\%) but marginally beating MPFuzz and Peach. This indicates that NanoMQ's reachable attack surface under the defined test harnessed configuration is relatively small or hits a shared protocol-state bottleneck early on, where both mutation-based and generation-based fuzzers quickly saturate shallow code pathways.
+For \textbf{NanoMQ}, the overall coverage numbers are intrinsically higher thanks to a resolved instrumentation scope. GMPFuzz reaches 3407 branches, successfully outperforming AFLNet (3350 branches) by 1.7\%. Generation-based fuzzers like MPFuzz and Peach achieve roughly 3100 branches, meaning GMPFuzz leads them by nearly 10\%. This demonstrates GMPFuzz's capacity to maintain a steady advantage in structurally complex protocol fields even as the target's internal pathways deepen.
 
 Globally, GMPFuzz exhibits superior capability in synthesizing semantically valid sequence combinations, allowing it to penetrate logic depths that block static generators and conventional network mutators alike.
 
@@ -45,26 +46,25 @@ To evaluate the contribution of each core component in GMPFuzz, we conducted an 
     \item \textbf{no-llm}: Completely removes the LLM-driven generation module, falling back to traditional random mutations.
 \end{itemize}
 
-Table \ref{tab:ablation} presents the number of covered branches (via gcovr) for FlashMQ, NanoMQ, and Mosquitto under each ablation setting, including the average branch count across the three targets.
+    Table \ref{tab:ablation} presents the number of covered branches (via gcovr) for FlashMQ, NanoMQ, Mosquitto, and Mongoose under each ablation setting, including the average branch count across the four targets.
 
-\begin{table}[h]
-    \centering
-    \caption{Covered Branches in Ablation Study}
-    \label{tab:ablation}
-    \begin{tabular}{lcccc}
-        \toprule
-        \textbf{Variant} & \textbf{FlashMQ} & \textbf{NanoMQ} & \textbf{Mosquitto} & \textbf{Average} \\
-        \midrule
-        full & 3001 & 413 & 1423 & 1612 \\
-        no-pasd & 2935 & 414 & 1408 & 1586 \\
-        no-llm & 2941 & 418 & 1418 & 1592 \\
-        no-ase & 2800 & 407 & 1398 & 1535 \\
-        \bottomrule
-    \end{tabular}
-\end{table}
-
+    \begin{table}[h]
+        \centering
+        \caption{Covered Branches in Ablation Study}
+        \label{tab:ablation}
+        \begin{tabular}{lccccc}
+            \toprule
+            \textbf{Variant} & \textbf{FlashMQ} & \textbf{NanoMQ} & \textbf{Mosquitto} & \textbf{Mongoose} & \textbf{Average} \\
+            \midrule
+            full & 3001 & 413 & 1423 & 435 & 1318 \\
+            no-pasd & 2935 & 414 & 1408 & 435 & 1298 \\
+            no-llm & 2941 & 418 & 1418 & 436 & 1303 \\
+            no-ase & 2800 & 407 & 1398 & 436 & 1260 \\
+            \bottomrule
+        \end{tabular}
+    \end{table}
 \textbf{Results Analysis}: 
-Looking at the \textbf{Average} covered branches, the ``full'' configuration performs the best overall (1612 branches on average), demonstrating the combined effectiveness of all components. Removing the state discovery module (``no-ase'') results in the most significant drop in overall coverage (down to 1535 branches), highlighting its critical role in deeply exploring protocol states across different implementations.
+Looking at the \textbf{Average} covered branches, the ``full'' configuration performs the best overall (1318 branches on average), demonstrating the combined effectiveness of all components. Removing the state discovery module (``no-ase'') results in the most significant drop in overall coverage (down to 1260 branches), highlighting its critical role in deeply exploring protocol states across different implementations.
 
 For \textbf{FlashMQ}, the ``full'' variant achieves the highest branch coverage (3001 branches). Disabling components leads to immediate coverage reductions, especially for ``no-ase'' (2800 branches), confirming that deep semantic exploration of MQTT is crucial for accessing intricate internal logic in this broker.
 

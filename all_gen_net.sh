@@ -51,6 +51,8 @@ genout_dir=$(./elmconfig.py get run.genoutput_dir -s GEN=. -s MODEL=.)
 export ENDPOINTS=$(./elmconfig.py get model.endpoints)
 export TYPE=$(./elmconfig.py get type)
 export PROJECT_NAME=$(./elmconfig.py get project_name)
+START_TIME_SEC=$(date +%s)
+T_BUDGET=$(./elmconfig.py get ase.T_budget 2>/dev/null || echo 21600)
 
 # Normalize the path
 genout_dir=$(realpath -m "$genout_dir")
@@ -153,6 +155,12 @@ if [ $start_gen -eq -1 ]; then
             echo "[ASE] $ASE_RESULT"
         else
             # No ASE: use fixed max_gens
+            CURRENT_TIME_SEC=$(date +%s)
+            ELAPSED_SEC=$((CURRENT_TIME_SEC - START_TIME_SEC))
+            if [ "$ELAPSED_SEC" -ge "$T_BUDGET" ]; then
+                echo "[No-ASE] Budget exhausted ($ELAPSED_SEC >= $T_BUDGET seconds)."
+                break
+            fi
             if [ "$current_gen" -ge "$last_gen" ]; then
                 break
             fi

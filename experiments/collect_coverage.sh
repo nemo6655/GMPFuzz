@@ -23,12 +23,22 @@ echo "========================================================"
 echo "  Edge Coverage Collection (Unified)"
 echo "  Target: ${TARGET} | Dir: ${RESULTS_DIR}"
 echo "========================================================"
-echo "fuzzer,instance,final_edges,data_points" > "$SUMMARY_CSV"
+echo "fuzzer,instance,final_edges,data_points,line_percent,branch_percent" > "$SUMMARY_CSV"
 
 # Extract from edge_coverage.csv (GMPFuzz/MPFuzz/Peach)
 extract_edge_csv() {
     local FUZZER=$1 DIR=$2 IDX=$3
     local CSV=$(find "$DIR" -maxdepth 1 -name "edge_coverage.csv" 2>/dev/null | head -1)
+    
+    local L_PER="N/A"
+    local B_PER="N/A"
+    local COV_CSV=$(find "$DIR" -name "cov_over_time.csv" 2>/dev/null | head -1)
+    if [ -n "$COV_CSV" ] && [ -f "$COV_CSV" ]; then
+        local LAST_COV=$(tail -1 "$COV_CSV")
+        L_PER=$(echo "$LAST_COV" | cut -d',' -f2)
+        B_PER=$(echo "$LAST_COV" | cut -d',' -f4)
+    fi
+
     if [ -n "$CSV" ] && [ -f "$CSV" ]; then
         # data_points = number of data rows (excluding header)
         local N=$(( $(wc -l < "$CSV") - 1 ))
@@ -37,21 +47,31 @@ extract_edge_csv() {
         if ! [[ "$FINAL" =~ ^[0-9]+$ ]]; then
             FINAL=0
         fi
-        echo "${FUZZER},${IDX},${FINAL},${N}" >> "$SUMMARY_CSV"
-        echo "    Edges: ${FINAL} (${N} data points)"
+        echo "${FUZZER},${IDX},${FINAL},${N},${L_PER},${B_PER}" >> "$SUMMARY_CSV"
+        echo "    Edges: ${FINAL} (${N} data points) | l_per: ${L_PER}, b_per: ${B_PER}"
     else
         echo "    WARNING: edge_coverage.csv not found"
-        echo "${FUZZER},${IDX},0,0" >> "$SUMMARY_CSV"
+        echo "${FUZZER},${IDX},0,0,${L_PER},${B_PER}" >> "$SUMMARY_CSV"
     fi
 }
 
 # Extract from AFLNet plot_data (map_size% * 65536)
 extract_aflnet_edges() {
     local FUZZER=$1 DIR=$2 IDX=$3
+    
+    local L_PER="N/A"
+    local B_PER="N/A"
+    local COV_CSV=$(find "$DIR" -name "cov_over_time.csv" 2>/dev/null | head -1)
+    if [ -n "$COV_CSV" ] && [ -f "$COV_CSV" ]; then
+        local LAST_COV=$(tail -1 "$COV_CSV")
+        L_PER=$(echo "$LAST_COV" | cut -d',' -f2)
+        B_PER=$(echo "$LAST_COV" | cut -d',' -f4)
+    fi
+
     local PD=$(find "$DIR" -name "plot_data" 2>/dev/null | head -1)
     if [ -z "$PD" ] || [ ! -f "$PD" ]; then
         echo "    WARNING: plot_data not found"
-        echo "${FUZZER},${IDX},0,0" >> "$SUMMARY_CSV"
+        echo "${FUZZER},${IDX},0,0,${L_PER},${B_PER}" >> "$SUMMARY_CSV"
         return
     fi
     local N=$(grep -cv "^#" "$PD" 2>/dev/null || echo 0)
@@ -59,10 +79,10 @@ extract_aflnet_edges() {
     local PCT=$(echo "$LAST" | cut -d',' -f7 | tr -d ' %')
     if [ -n "$PCT" ]; then
         local EDGES=$(echo "$PCT * 65536 / 100" | bc 2>/dev/null | cut -d. -f1)
-        echo "${FUZZER},${IDX},${EDGES:-0},${N}" >> "$SUMMARY_CSV"
-        echo "    Edges: ${EDGES:-0} (map=${PCT}%, ${N} points)"
+        echo "${FUZZER},${IDX},${EDGES:-0},${N},${L_PER},${B_PER}" >> "$SUMMARY_CSV"
+        echo "    Edges: ${EDGES:-0} (map=${PCT}%, ${N} points) | l_per: ${L_PER}, b_per: ${B_PER}"
     else
-        echo "${FUZZER},${IDX},0,${N}" >> "$SUMMARY_CSV"
+        echo "${FUZZER},${IDX},0,${N},${L_PER},${B_PER}" >> "$SUMMARY_CSV"
     fi
 }
 

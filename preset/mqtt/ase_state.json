@@ -16,29 +16,53 @@
   "history": [
     {
       "gen": 0,
-      "predicted_epoch": 4500,
-      "delta_cov": 296.0,
-      "actual_time": 3621.053291320801,
-      "start_cov": 39.0,
-      "end_cov": 335.0,
+      "predicted_epoch": 3600,
+      "delta_cov": 94.0,
+      "actual_time": 782.5911076068878,
+      "start_cov": 325.0,
+      "end_cov": 419.0,
       "was_early_stopped": true,
-      "was_extended": true,
-      "extend_count": 3,
-      "wall_clock_total": 3621.053291320801
+      "was_extended": false,
+      "extend_count": 0,
+      "wall_clock_total": 782.5911076068878
     },
     {
       "gen": 1,
-      "predicted_epoch": 9777,
-      "delta_cov": 1793.0,
-      "actual_time": 8294.089950561523,
-      "start_cov": 130.0,
-      "end_cov": 1923.0,
+      "predicted_epoch": 10061,
+      "delta_cov": 1823.0,
+      "actual_time": 8567.636307954788,
+      "start_cov": 715.0,
+      "end_cov": 2538.0,
       "was_early_stopped": true,
       "was_extended": true,
       "extend_count": 5,
-      "wall_clock_total": 8294.089950561523
+      "wall_clock_total": 8567.636307954788
+    },
+    {
+      "gen": 2,
+      "predicted_epoch": 17727,
+      "delta_cov": 3837.0,
+      "actual_time": 15051.427873849869,
+      "start_cov": 960.0,
+      "end_cov": 4797.0,
+      "was_early_stopped": true,
+      "was_extended": true,
+      "extend_count": 9,
+      "wall_clock_total": 15051.427873849869
+    },
+    {
+      "gen": 3,
+      "predicted_epoch": 35710,
+      "delta_cov": 4842.0,
+      "actual_time": 30339.136199474335,
+      "start_cov": 515.0,
+      "end_cov": 5357.0,
+      "was_early_stopped": true,
+      "was_extended": true,
+      "extend_count": 18,
+      "wall_clock_total": 30339.136199474335
     }
   ],
-  "total_elapsed": 11915.143241882324,
-  "total_fuzz_time": 11915.143241882324
+  "total_elapsed": 54740.79148888588,
+  "total_fuzz_time": 54740.79148888588
 }

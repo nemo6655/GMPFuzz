@@ -1,0 +1,3 @@
+sed -i 's/export PROJECT_NAME=$(.\/elmconfig.py get project_name)/export PROJECT_NAME=$(.\/elmconfig.py get project_name)\nSTART_TIME_SEC=$(date +%s)\nT_BUDGET=$(.\/elmconfig.py get ase.T_budget 2>\/dev\/null || echo 21600)/' all_gen_net.sh
+
+sed -i 's/# No ASE: use fixed max_gens/# No ASE: use fixed max_gens\n            CURRENT_TIME_SEC=$(date +%s)\n            ELAPSED_SEC=$((CURRENT_TIME_SEC - START_TIME_SEC))\n            if [ "$ELAPSED_SEC" -ge "$T_BUDGET" ]; then\n                echo "[No-ASE] Budget exhausted ($ELAPSED_SEC >= $T_BUDGET seconds)."\n                break\n            fi/' all_gen_net.sh

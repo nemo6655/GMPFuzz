@@ -17,28 +17,52 @@
     {
       "gen": 0,
       "predicted_epoch": 4500,
-      "delta_cov": 651.0,
-      "actual_time": 3611.937812805176,
-      "start_cov": 39.0,
-      "end_cov": 690.0,
+      "delta_cov": 538.0,
+      "actual_time": 3612.273490190506,
+      "start_cov": 322.0,
+      "end_cov": 860.0,
       "was_early_stopped": true,
       "was_extended": true,
       "extend_count": 3,
-      "wall_clock_total": 3611.937812805176
+      "wall_clock_total": 3612.273490190506
     },
     {
       "gen": 1,
       "predicted_epoch": 9778,
-      "delta_cov": 3136.0,
-      "actual_time": 8293.632945775986,
-      "start_cov": 147.0,
-      "end_cov": 3283.0,
+      "delta_cov": 3385.0,
+      "actual_time": 8300.91563463211,
+      "start_cov": 1145.0,
+      "end_cov": 4530.0,
       "was_early_stopped": true,
       "was_extended": true,
       "extend_count": 5,
-      "wall_clock_total": 8293.632945775986
+      "wall_clock_total": 8300.91563463211
+    },
+    {
+      "gen": 2,
+      "predicted_epoch": 24083,
+      "delta_cov": 5341.0,
+      "actual_time": 20491.24654507637,
+      "start_cov": 467.0,
+      "end_cov": 5808.0,
+      "was_early_stopped": true,
+      "was_extended": true,
+      "extend_count": 12,
+      "wall_clock_total": 20491.24654507637
+    },
+    {
+      "gen": 3,
+      "predicted_epoch": 36000,
+      "delta_cov": 5886.0,
+      "actual_time": 36004.27585172653,
+      "start_cov": 474.0,
+      "end_cov": 6360.0,
+      "was_early_stopped": false,
+      "was_extended": false,
+      "extend_count": 0,
+      "wall_clock_total": 36004.27585172653
     }
   ],
-  "total_elapsed": 11905.570758581161,
-  "total_fuzz_time": 11905.570758581161
+  "total_elapsed": 68408.71152162552,
+  "total_fuzz_time": 68408.71152162552
 }

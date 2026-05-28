@@ -1,0 +1,2 @@
+sed -i 's|gcovr -r /home/ubuntu/experiments/mongoose-gcov -s -d > /dev/null 2>&1 || true|gcovr -r /home/ubuntu/experiments/mongoose-src --object-directory /home/ubuntu/experiments/mongoose-gcov -s -d > /dev/null 2>&1 || true|' run_mongoose_ablation_supplement.sh
+sed -i 's|gcovr -r /home/ubuntu/experiments/mongoose-gcov -s || true|gcovr -r /home/ubuntu/experiments/mongoose-src --object-directory /home/ubuntu/experiments/mongoose-gcov -s || true|' run_mongoose_ablation_supplement.sh

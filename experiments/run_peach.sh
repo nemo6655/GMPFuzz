@@ -72,6 +72,11 @@ case "$TARGET" in
         TARGET_DESC="Mosquitto v1.5.5"
         BUILD_DIR="benchmark/mpfuzz_mqtt"
         ;;
+    mosquitto)
+        IMAGE="mpfuzz/mosquitto"
+        TARGET_DESC="Mosquitto Latest"
+        BUILD_DIR="benchmark/mpfuzz_mosquitto"
+        ;;
     mongoose)
         IMAGE="mpfuzz/mongoose"
         TARGET_DESC="Mongoose v7.20"
@@ -194,6 +199,17 @@ for cid in "${CIDS[@]}"; do
         echo "    Edge coverage CSV: OK (final edges: ${FINAL_EDGES:-N/A})"
     else
         echo "    WARNING: edge_coverage.csv not found"
+    fi
+
+    # Copy gcovr coverage CSV
+    if [ -f "${INSTANCE_DIR}/peach_output/cov_over_time.csv" ]; then
+        cp "${INSTANCE_DIR}/peach_output/cov_over_time.csv" "${INSTANCE_DIR}/cov_over_time.csv"
+        FINAL_LINE=$(tail -1 "${INSTANCE_DIR}/cov_over_time.csv")
+        L_PER=$(echo "$FINAL_LINE" | cut -d',' -f2)
+        B_PER=$(echo "$FINAL_LINE" | cut -d',' -f4)
+        echo "    Gcov coverage: OK (Lines: ${L_PER:-N/A}%, Branches: ${B_PER:-N/A}%)"
+    else
+        echo "    WARNING: cov_over_time.csv not found"
     fi
 
     # Copy crash logs

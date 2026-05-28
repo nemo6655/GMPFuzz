@@ -15,13 +15,13 @@
 #
 # Coverage:
 #   AFLNet & GMPFuzz: gcov line/branch coverage (via cov_script inside container)
-#   MPFuzz & Peach:   edge coverage only (via shared-memory bitmap + cov_collect.py)
+#   MPFuzz & Peach:   gcov line/branch coverage + edge coverage (via gcovr and shared-memory bitmap)
 #
 # Usage:
 #   ./run_experiment.sh [options]
 #
 # Options:
-#   -t, --target TARGET  Fuzzing target: mqtt, mongoose, nanomq (default: mqtt)
+#   -t, --target TARGET  Fuzzing target: mqtt, mosquitto, mongoose, nanomq (default: mqtt)
 #   --timeout SEC        Fuzzing timeout in seconds (default: 86400 = 24h)
 #   -n, --num-inst N     AFLNet/Peach instances (default: 4)
 #   -o, --output DIR     Output directory (default: results_YYYYMMDD_HHMMSS)
@@ -80,10 +80,12 @@ done
 # Target description
 case "$TARGET" in
     mqtt)      TARGET_DESC="Mosquitto v1.5.5" ;;
+    mosquitto) TARGET_DESC="Mosquitto Latest" ;;
     mongoose)  TARGET_DESC="Mongoose v7.20" ;;
     nanomq)    TARGET_DESC="NanoMQ v0.21.10" ;;
+    flashmq)   TARGET_DESC="FlashMQ" ;;
     *)
-        echo "ERROR: Unknown target '${TARGET}'. Supported: mqtt, mongoose, nanomq"
+        echo "ERROR: Unknown target '${TARGET}'. Supported: mqtt, mosquitto, mongoose, nanomq, flashmq"
         exit 1
         ;;
 esac
@@ -146,15 +148,17 @@ echo "║  Fuzzer     | Image              | Coverage                 ║"
 echo "║  -----------|--------------------|------------------------- ║"
 printf "║  GMPFuzz    | gmpfuzz/%-10s | gcov (line+branch)       ║\n" "${TARGET}"
 
-# AFLNet uses ProFuzzBench images: mqtt->mosquitto, mongoose->mongoose, nanomq->nanomq
+# AFLNet uses ProFuzzBench images: mqtt->mosquitto, mosquitto->mosquitto (for AFLNet too since we will just supply our built image), mongoose->mongoose, nanomq->nanomq
 case "$TARGET" in
     mqtt)     AFLNET_IMAGE="mosquitto" ;;
+    mosquitto) AFLNET_IMAGE="gmpfuzz/mosquitto" ;;
     mongoose) AFLNET_IMAGE="mongoose" ;;
     nanomq)   AFLNET_IMAGE="nanomq" ;;
+    flashmq)  AFLNET_IMAGE="flashmq" ;;
 esac
 printf "║  AFLNet     | %-18s | gcov (line+branch)       ║\n" "${AFLNET_IMAGE}"
-printf "║  MPFuzz     | mpfuzz/%-11s | edge only                ║\n" "${TARGET}"
-printf "║  Peach      | mpfuzz/%-11s | edge only                ║\n" "${TARGET}"
+printf "║  MPFuzz     | mpfuzz/%-11s | edge + gcov (line+br)    ║\n" "${TARGET}"
+printf "║  Peach      | mpfuzz/%-11s | edge + gcov (line+br)    ║\n" "${TARGET}"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo ""
 
@@ -193,8 +197,10 @@ IMAGES_TO_CHECK=("gmpfuzz/${TARGET}")
 # AFLNet uses ProFuzzBench images
 case "$TARGET" in
     mqtt)     IMAGES_TO_CHECK+=("mosquitto") ;;
+    mosquitto) IMAGES_TO_CHECK+=("gmpfuzz/mosquitto") ;;
     mongoose) IMAGES_TO_CHECK+=("mongoose") ;;
     nanomq)   IMAGES_TO_CHECK+=("nanomq") ;;
+    flashmq)  IMAGES_TO_CHECK+=("flashmq") ;;
 esac
 
 for f in "${FUZZERS_TO_RUN[@]}"; do

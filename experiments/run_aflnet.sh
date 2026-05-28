@@ -80,6 +80,11 @@ case "$TARGET" in
         TARGET_DESC="Mosquitto v1.5.5"
         OUTDIR_NAME="out-mqtt-aflnet"
         ;;
+    mosquitto)
+        IMAGE="gmpfuzz/mosquitto"
+        TARGET_DESC="Mosquitto Latest"
+        OUTDIR_NAME="out-mosquitto-aflnet"
+        ;;
     mongoose)
         IMAGE="mongoose"
         TARGET_DESC="Mongoose v7.20"

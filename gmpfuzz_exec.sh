@@ -7,7 +7,7 @@
 #   test_number   Test run identifier (e.g., 1, 2, 3)
 #
 # Options:
-#   -t, --target TARGET     Fuzzing target: mqtt, mongoose, nanomq (default: mqtt)
+#   -t, --target TARGET     Fuzzing target: mqtt, mosquitto, mongoose, nanomq (default: mqtt)
 #   -n, --num-gens NUM      Number of generations (default: 5)
 #   -a, --ablation MODE     Ablation mode for experiments:
 #                             full      - All features enabled (default)
@@ -54,6 +54,7 @@ show_usage() {
     echo "Options:"
     echo "  -t, --target TARGET     Fuzzing target (default: mqtt)"
     echo "                            mqtt      - Mosquitto v1.5.5"
+    echo "                            mosquitto - Mosquitto Latest"
     echo "                            mongoose  - Mongoose v7.20"
     echo "                            nanomq    - NanoMQ v0.21.10"
     echo "  -n, --num-gens NUM      Number of generations (default: 5)"
@@ -160,10 +161,9 @@ CURRENT_DATE=$(date +%Y%m%d_%H%M%S)
 # =====================================================================
 # Ablation mode: load shortened budget config
 # =====================================================================
-# Non-full modes use config_ablation.yaml (T_budget=21600s / 6h).
-# elmconfig.py loads ELMFUZZ_CONFIG on top of config.yaml (deep-merge,
-# so only the overridden keys change; everything else stays from config.yaml).
-if [ "$ABLATION_MODE" != "full" ]; then
+# For ablation tests (and if explicitly passing an ablation budget), we 
+# want to override the default 24h budget.
+if [ "$ABLATION_MODE" != "full" ] || [ -n "$ABLATION_BUDGET" ] || [[ "$TEST_NUMBER" == *"ablation"* ]]; then
     ABLATION_CONFIG="${SCRIPT_DIR}/preset/${TARGET}/config_ablation.yaml"
     if [ -f "$ABLATION_CONFIG" ]; then
         export ELMFUZZ_CONFIG="$ABLATION_CONFIG"
